@@ -34,7 +34,11 @@
 # Hilt
 -keep class dagger.hilt.** { *; }
 -keep class javax.inject.** { *; }
--keep class * extends dagger.hilt.android.lifecycle.HiltViewModel
+
+# Keep all ViewModels by their real names so R8 can't rename two to the same
+# obfuscated name (causes "Multiple entries with same key" in HiltViewModelFactory).
+-keep class * extends androidx.lifecycle.ViewModel { *; }
+-keep @dagger.hilt.android.lifecycle.HiltViewModel class * { *; }
 
 # Keep data classes for Firestore
 -keep class com.budgetapp.data.** { *; }
