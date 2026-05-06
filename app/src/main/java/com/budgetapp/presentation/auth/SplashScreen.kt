@@ -23,6 +23,10 @@ class SplashViewModel @Inject constructor(
     suspend fun isUserLoggedIn(): Boolean {
         return authRepository.isUserLoggedIn()
     }
+
+    suspend fun getCurrentUserId(): String? {
+        return authRepository.getCurrentUserId()
+    }
 }
 
 @Composable
@@ -34,7 +38,7 @@ fun SplashScreen(
     LaunchedEffect(Unit) {
         delay(1500) // Show splash for 1.5 seconds
         if (viewModel.isUserLoggedIn()) {
-            val userId = viewModel.authRepository.getCurrentUserId()
+            val userId = viewModel.getCurrentUserId()
             if (userId != null) {
                 onNavigateToDashboard(userId)
             } else {

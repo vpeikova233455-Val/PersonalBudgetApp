@@ -188,12 +188,13 @@ fun DashboardScreen(
                     }
                 }
             }
+        }
 
-            // Pull-to-refresh indicator
-            PullToRefreshContainer(
-                state = pullToRefreshState,
-                modifier = Modifier.align(Alignment.TopCenter)
-            )
+        // Pull-to-refresh indicator
+        PullToRefreshContainer(
+            state = pullToRefreshState,
+            modifier = Modifier.align(Alignment.TopCenter)
+        )
         }
     }
 }
