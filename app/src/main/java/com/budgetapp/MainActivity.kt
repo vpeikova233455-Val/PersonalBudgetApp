@@ -11,11 +11,13 @@ import androidx.compose.ui.Modifier
 import com.budgetapp.navigation.AppNavigation
 import com.budgetapp.presentation.theme.BudgetAppTheme
 import dagger.hilt.android.AndroidEntryPoint
+import java.io.File
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        showPreviousCrashIfAny()
         enableEdgeToEdge()
         setContent {
             BudgetAppTheme {
@@ -27,5 +29,18 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    private fun showPreviousCrashIfAny() {
+        val crashFile = File(filesDir, "last_crash.txt")
+        if (!crashFile.exists()) return
+        val crashLog = runCatching { crashFile.readText() }.getOrNull() ?: return
+        crashFile.delete()
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Previous Crash")
+            .setMessage(crashLog.take(3000))
+            .setPositiveButton("OK", null)
+            .setCancelable(false)
+            .show()
     }
 }
