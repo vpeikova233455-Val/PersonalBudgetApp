@@ -10,6 +10,9 @@ interface CategoryDao {
     @Query("SELECT * FROM categories ORDER BY name ASC")
     fun getAllCategories(): Flow<List<CategoryEntity>>
 
+    @Query("SELECT * FROM categories ORDER BY name ASC")
+    suspend fun getAllCategoriesSync(): List<CategoryEntity>
+
     @Query("SELECT * FROM categories WHERE isCustom = 0 ORDER BY name ASC")
     fun getBuiltInCategories(): Flow<List<CategoryEntity>>
 

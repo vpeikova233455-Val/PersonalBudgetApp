@@ -10,6 +10,9 @@ interface UserCategoryPreferenceDao {
     @Query("SELECT * FROM user_category_preferences WHERE userId = :userId ORDER BY usageCount DESC, lastUsedTimestamp DESC")
     fun getAllPreferences(userId: String): Flow<List<UserCategoryPreference>>
 
+    @Query("SELECT * FROM user_category_preferences WHERE userId = :userId ORDER BY usageCount DESC, lastUsedTimestamp DESC")
+    suspend fun getAllPreferencesSync(userId: String): List<UserCategoryPreference>
+
     @Query("SELECT * FROM user_category_preferences WHERE userId = :userId AND merchantPattern LIKE :pattern ORDER BY usageCount DESC LIMIT 1")
     suspend fun getPreferenceByPattern(userId: String, pattern: String): UserCategoryPreference?
 
