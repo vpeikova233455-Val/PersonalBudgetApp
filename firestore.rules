@@ -1,0 +1,85 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isValidTimestamp(timestamp) {
+      return timestamp is number && timestamp > 0;
+    }
+
+    // Users collection
+    match /users/{userId} {
+      allow read: if isOwner(userId);
+      allow write: if isOwner(userId);
+
+      // Transactions subcollection
+      match /transactions/{transactionId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId)
+          && request.resource.data.userId == userId
+          && request.resource.data.amount is number
+          && request.resource.data.amount > 0
+          && request.resource.data.description is string
+          && request.resource.data.categoryId is number
+          && isValidTimestamp(request.resource.data.date)
+          && isValidTimestamp(request.resource.data.lastModifiedTimestamp);
+        allow update: if isOwner(userId)
+          && request.resource.data.userId == userId
+          && isValidTimestamp(request.resource.data.lastModifiedTimestamp);
+        allow delete: if isOwner(userId);
+      }
+
+      // Categories subcollection
+      match /categories/{categoryId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId)
+          && request.resource.data.name is string
+          && request.resource.data.icon is string
+          && request.resource.data.color is string
+          && request.resource.data.isCustom == true;
+        allow update: if isOwner(userId)
+          && request.resource.data.isCustom == true;
+        allow delete: if isOwner(userId)
+          && resource.data.isCustom == true;
+      }
+
+      // Budgets subcollection
+      match /budgets/{budgetId} {
+        allow read: if isOwner(userId);
+        allow write: if isOwner(userId)
+          && request.resource.data.userId == userId
+          && request.resource.data.monthlyLimit is number
+          && request.resource.data.monthlyLimit > 0
+          && request.resource.data.alertThreshold >= 0
+          && request.resource.data.alertThreshold <= 1;
+      }
+
+      // Recurring transactions subcollection
+      match /recurring_transactions/{recurringId} {
+        allow read: if isOwner(userId);
+        allow write: if isOwner(userId)
+          && request.resource.data.userId == userId;
+      }
+
+      // Pension accounts subcollection
+      match /pension_accounts/{pensionId} {
+        allow read: if isOwner(userId);
+        allow write: if isOwner(userId)
+          && request.resource.data.userId == userId;
+      }
+    }
+
+    // Deny all other access
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
