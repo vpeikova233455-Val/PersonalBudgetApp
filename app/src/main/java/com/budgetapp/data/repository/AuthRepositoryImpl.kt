@@ -44,11 +44,11 @@ class AuthRepositoryImpl @Inject constructor(
     }
 
     override suspend fun getCurrentUserId(): String? {
-        return firebaseAuth.currentUser?.uid
+        return firebaseAuth.currentUser?.uid ?: "local_user"
     }
 
     override suspend fun isUserLoggedIn(): Boolean {
-        return firebaseAuth.currentUser != null
+        return true
     }
 
     override suspend fun sendPasswordResetEmail(email: String): Result<Unit> {

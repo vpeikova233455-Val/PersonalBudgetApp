@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -5,6 +7,11 @@ plugins {
     id("com.google.gms.google-services")
     id("com.google.devtools.ksp")
     kotlin("kapt")
+}
+
+val localProps = Properties().apply {
+    val f = rootProject.file("local.properties")
+    if (f.exists()) load(f.inputStream())
 }
 
 android {
@@ -27,6 +34,10 @@ android {
         ksp {
             arg("room.schemaLocation", "$projectDir/schemas")
         }
+
+        buildConfigField("String", "GITHUB_TOKEN", "\"${localProps.getProperty("github.token", "")}\"")
+        buildConfigField("String", "GITHUB_OWNER", "\"${localProps.getProperty("github.owner", "")}\"")
+        buildConfigField("String", "GITHUB_REPO",  "\"${localProps.getProperty("github.repo",  "")}\"")
     }
 
     signingConfigs {
@@ -63,6 +74,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     composeOptions {

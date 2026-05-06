@@ -9,44 +9,20 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import androidx.hilt.navigation.compose.hiltViewModel
-import com.budgetapp.domain.repository.AuthRepository
-import dagger.hilt.android.lifecycle.HiltViewModel
+import com.budgetapp.core.util.AppLogger
 import kotlinx.coroutines.delay
-import javax.inject.Inject
-import androidx.lifecycle.ViewModel
 
-@HiltViewModel
-class SplashViewModel @Inject constructor(
-    private val authRepository: AuthRepository
-) : ViewModel() {
-    suspend fun isUserLoggedIn(): Boolean {
-        return authRepository.isUserLoggedIn()
-    }
-
-    suspend fun getCurrentUserId(): String? {
-        return authRepository.getCurrentUserId()
-    }
-}
+private const val TAG = "SplashScreen"
 
 @Composable
 fun SplashScreen(
     onNavigateToLogin: () -> Unit,
-    onNavigateToDashboard: (String) -> Unit,
-    viewModel: SplashViewModel = hiltViewModel()
+    onNavigateToDashboard: (String) -> Unit
 ) {
     LaunchedEffect(Unit) {
-        delay(1500) // Show splash for 1.5 seconds
-        if (viewModel.isUserLoggedIn()) {
-            val userId = viewModel.getCurrentUserId()
-            if (userId != null) {
-                onNavigateToDashboard(userId)
-            } else {
-                onNavigateToLogin()
-            }
-        } else {
-            onNavigateToLogin()
-        }
+        AppLogger.i(TAG, "App started — single-user mode, skipping auth")
+        delay(1000)
+        onNavigateToDashboard("local_user")
     }
 
     Box(
