@@ -11,6 +11,7 @@ import com.budgetapp.domain.usecase.ai.LearnFromUserUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import java.text.NumberFormat
 import java.text.SimpleDateFormat
 import java.util.*
@@ -25,7 +26,7 @@ class ReviewTransactionsViewModel @Inject constructor(
     private val learnFromUserUseCase: LearnFromUserUseCase
 ) : ViewModel() {
 
-    private val userId = authRepository.getCurrentUserId() ?: ""
+    private val userId = runBlocking { authRepository.getCurrentUserId() } ?: ""
 
     private val _uiState = MutableStateFlow(ReviewTransactionsUiState())
     val uiState: StateFlow<ReviewTransactionsUiState> = _uiState.asStateFlow()
@@ -47,10 +48,10 @@ class ReviewTransactionsViewModel @Inject constructor(
                                     description = entity.description ?: "Unknown",
                                     formattedAmount = formatAmount(entity.amount ?: 0.0),
                                     formattedDate = entity.date?.let { formatDate(it) },
-                                    type = entity.type ?: "EXPENSE",
-                                    suggestedCategory = null, // TODO: lookup category name
-                                    confidence = entity.extractionConfidence ?: 0.5,
-                                    sourceType = entity.sourceType,
+                                    type = entity.type?.name ?: "EXPENSE",
+                                    suggestedCategory = null,
+                                    confidence = entity.categoryConfidence ?: 0.5,
+                                    sourceType = entity.sourceType.name,
                                     aiQuestions = entity.aiQuestions?.let { parseQuestions(it) }
                                 )
                             },
@@ -84,16 +85,14 @@ class ReviewTransactionsViewModel @Inject constructor(
             val transaction = TransactionEntity(
                 id = UUID.randomUUID().toString(),
                 userId = userId,
-                type = com.budgetapp.data.local.entity.TransactionType.valueOf(
-                    pending.type ?: "EXPENSE"
-                ),
+                type = pending.type ?: com.budgetapp.data.local.entity.TransactionType.EXPENSE,
                 amount = pending.amount ?: 0.0,
                 description = pending.description ?: "",
-                categoryId = pending.suggestedCategoryId ?: 1L,
+                categoryId = pending.suggestedCategory ?: 1L,
                 date = pending.date ?: System.currentTimeMillis(),
                 isRecurring = false,
                 recurringId = null,
-                syncStatus = com.budgetapp.data.local.entity.SyncStatus.PENDING_SYNC,
+                syncStatus = com.budgetapp.data.local.entity.SyncStatus.PENDING,
                 lastModifiedTimestamp = System.currentTimeMillis(),
                 deviceId = UUID.randomUUID().toString(),
                 firestoreId = null
@@ -102,11 +101,11 @@ class ReviewTransactionsViewModel @Inject constructor(
             transactionDao.insertTransaction(transaction)
 
             // Learn from user's approval
-            if (pending.suggestedCategoryId != null) {
+            if (pending.suggestedCategory != null) {
                 learnFromUserUseCase(
                     userId = userId,
                     description = pending.description ?: "",
-                    selectedCategoryId = pending.suggestedCategoryId
+                    selectedCategoryId = pending.suggestedCategory
                 )
             }
 

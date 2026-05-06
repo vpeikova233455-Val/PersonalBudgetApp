@@ -175,21 +175,21 @@ class FileParserService @Inject constructor(
         // Extract amount (from either amount column or debit/credit columns)
         val (amount, type) = when {
             mapping.amountColumn != null -> {
-                val amountStr = cells.getOrNull(mapping.amountColumn)
+                val col = mapping.amountColumn!!
+                val amountStr = cells.getOrNull(col)
                 val amt = parseAmount(amountStr)
-                // Guess type based on sign or context
                 val isExpense = amountStr?.startsWith("-") == true ||
                     amountStr?.contains("debit", ignoreCase = true) == true
                 amt to if (isExpense) TransactionType.EXPENSE else TransactionType.INCOME
             }
 
             mapping.debitColumn != null -> {
-                val amt = parseAmount(cells.getOrNull(mapping.debitColumn))
+                val amt = parseAmount(cells.getOrNull(mapping.debitColumn!!))
                 amt to TransactionType.EXPENSE
             }
 
             mapping.creditColumn != null -> {
-                val amt = parseAmount(cells.getOrNull(mapping.creditColumn))
+                val amt = parseAmount(cells.getOrNull(mapping.creditColumn!!))
                 amt to TransactionType.INCOME
             }
 

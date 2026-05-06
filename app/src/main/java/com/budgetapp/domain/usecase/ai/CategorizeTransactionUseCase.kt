@@ -2,6 +2,7 @@ package com.budgetapp.domain.usecase.ai
 
 import com.budgetapp.data.local.database.dao.CategoryDao
 import com.budgetapp.data.local.database.dao.UserCategoryPreferenceDao
+import com.budgetapp.data.local.entity.CategoryEntity
 import com.budgetapp.data.remote.gemini.CategorySuggestion
 import com.budgetapp.data.remote.gemini.GeminiService
 import com.budgetapp.domain.model.Category
@@ -112,7 +113,7 @@ class CategorizeTransactionUseCase @Inject constructor(
     /**
      * Predefined rules for common merchants and patterns
      */
-    private suspend fun checkPredefinedRules(description: String): Category? {
+    private suspend fun checkPredefinedRules(description: String): CategoryEntity? {
         val descriptionLower = description.lowercase()
 
         // Define rules (merchant patterns -> category names)
@@ -162,7 +163,7 @@ class CategorizeTransactionUseCase @Inject constructor(
     /**
      * Find category by name (case-insensitive)
      */
-    private suspend fun findCategoryByName(name: String): Category? {
+    private suspend fun findCategoryByName(name: String): CategoryEntity? {
         val categories = categoryDao.getAllCategoriesSync()
         return categories.find { it.name.equals(name, ignoreCase = true) }
     }
