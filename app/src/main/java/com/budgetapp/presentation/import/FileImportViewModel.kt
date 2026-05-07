@@ -1,5 +1,10 @@
 package com.budgetapp.presentation.import
 
+import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -9,10 +14,13 @@ import com.budgetapp.data.local.entity.PendingTransactionEntity
 import com.budgetapp.data.local.entity.TransactionType as EntityTransactionType
 import com.budgetapp.data.remote.gemini.FileParseResult
 import com.budgetapp.data.remote.gemini.FileParserService
+import com.budgetapp.data.remote.gemini.GeminiOcrService
+import com.budgetapp.data.remote.gemini.OcrResult
 import com.budgetapp.data.remote.gemini.ParsedTransaction
 import com.budgetapp.data.remote.gemini.TransactionType as GeminiTransactionType
 import com.budgetapp.domain.repository.AuthRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -24,7 +32,9 @@ import javax.inject.Inject
 
 @HiltViewModel
 class FileImportViewModel @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val fileParserService: FileParserService,
+    private val geminiOcrService: GeminiOcrService,
     private val pendingTransactionDao: PendingTransactionDao,
     private val authRepository: AuthRepository
 ) : ViewModel() {
@@ -38,12 +48,14 @@ class FileImportViewModel @Inject constructor(
             try {
                 val result = withContext(Dispatchers.IO) { fileParserService.parseFile(uri) }
                 when (result) {
-                    is FileParseResult.Success -> {
-                        val months = groupByMonth(result.transactions)
-                        if (months.isEmpty()) {
-                            _state.value = FileImportState.Error("No transactions with recognisable dates found.")
+                    is FileParseResult.Success -> showPreview(result.transactions)
+                    is FileParseResult.NeedsOcr -> {
+                        _state.value = FileImportState.OcrInProgress
+                        val transactions = withContext(Dispatchers.IO) { ocrPdfPages(uri) }
+                        if (transactions.isEmpty()) {
+                            _state.value = FileImportState.Error("Could not extract transactions from this PDF. Try uploading a screenshot instead.")
                         } else {
-                            _state.value = FileImportState.Preview(months)
+                            showPreview(transactions)
                         }
                     }
                     is FileParseResult.Error -> _state.value = FileImportState.Error(result.message)
@@ -52,6 +64,42 @@ class FileImportViewModel @Inject constructor(
                 _state.value = FileImportState.Error(e.message ?: "Unknown error")
             }
         }
+    }
+
+    private fun showPreview(transactions: List<ParsedTransaction>) {
+        val months = groupByMonth(transactions)
+        if (months.isEmpty()) {
+            _state.value = FileImportState.Error("No transactions with recognisable dates found.")
+        } else {
+            _state.value = FileImportState.Preview(months)
+        }
+    }
+
+    private suspend fun ocrPdfPages(uri: Uri): List<ParsedTransaction> {
+        val transactions = mutableListOf<ParsedTransaction>()
+        try {
+            val pfd = context.contentResolver.openFileDescriptor(uri, "r") ?: return emptyList()
+            val renderer = PdfRenderer(pfd)
+            val pageCount = minOf(renderer.pageCount, 10)
+
+            for (i in 0 until pageCount) {
+                val page = renderer.openPage(i)
+                val scale = 2
+                val bitmap = Bitmap.createBitmap(page.width * scale, page.height * scale, Bitmap.Config.ARGB_8888)
+                Canvas(bitmap).drawColor(Color.WHITE)
+                page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                page.close()
+
+                when (val ocr = geminiOcrService.extractTransactionsFromBitmap(bitmap)) {
+                    is OcrResult.Success -> transactions.addAll(ocr.transactions)
+                    is OcrResult.Error -> {}
+                }
+                bitmap.recycle()
+            }
+            renderer.close()
+            pfd.close()
+        } catch (_: Exception) {}
+        return transactions
     }
 
     fun toggleMonth(key: String) {
@@ -178,6 +226,7 @@ class FileImportViewModel @Inject constructor(
 sealed class FileImportState {
     object Idle : FileImportState()
     object Parsing : FileImportState()
+    object OcrInProgress : FileImportState()
     data class Preview(val months: List<MonthGroup>) : FileImportState() {
         val selectedCount: Int get() = months.filter { it.selected }.sumOf { it.transactions.size }
         val totalCount: Int get() = months.sumOf { it.transactions.size }

@@ -10,7 +10,6 @@ import org.apache.poi.ss.usermodel.DateUtil
 import org.apache.poi.ss.usermodel.WorkbookFactory
 import java.io.InputStreamReader
 import java.text.SimpleDateFormat
-import java.util.Date
 import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -24,6 +23,9 @@ class FileParserService @Inject constructor(
             val mimeType = context.contentResolver.getType(uri)
             val path = uri.path?.lowercase() ?: ""
             when {
+                mimeType == "application/pdf" || path.endsWith(".pdf") ->
+                    FileParseResult.NeedsOcr
+
                 mimeType?.contains("spreadsheet") == true ||
                 mimeType?.contains("excel") == true ||
                 path.endsWith(".xlsx") || path.endsWith(".xls") -> parseExcelFile(uri)
@@ -32,7 +34,6 @@ class FileParserService @Inject constructor(
                 mimeType?.contains("plain") == true ||
                 path.endsWith(".csv") -> parseCsvFile(uri)
 
-                // Fall back to trying Excel first (many banks export without correct MIME)
                 else -> tryExcelThenCsv(uri)
             }
         } catch (e: Exception) {
@@ -371,4 +372,5 @@ data class ParsedTransaction(
 sealed class FileParseResult {
     data class Success(val transactions: List<ParsedTransaction>) : FileParseResult()
     data class Error(val message: String) : FileParseResult()
+    object NeedsOcr : FileParseResult()
 }

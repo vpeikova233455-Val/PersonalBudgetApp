@@ -42,6 +42,10 @@ fun ImportOptionsScreen(
         ActivityResultContracts.OpenDocument()
     ) { uri -> uri?.let { fileImportViewModel.parseFile(it) } }
 
+    val pdfPickerLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri -> uri?.let { fileImportViewModel.parseFile(it) } }
+
     // ── Side effects ──────────────────────────────────────────────────────────
 
     LaunchedEffect(ocrState) {
@@ -77,12 +81,14 @@ fun ImportOptionsScreen(
 
     val isProcessing = ocrState is OcrImportState.Processing ||
                        fileState is FileImportState.Parsing  ||
+                       fileState is FileImportState.OcrInProgress ||
                        fileState is FileImportState.Importing
     if (isProcessing) {
         val message = when {
-            ocrState is OcrImportState.Processing    -> "Extracting transactions with AI…"
-            fileState is FileImportState.Parsing     -> "Reading file…"
-            fileState is FileImportState.Importing   -> "Saving transactions…"
+            ocrState is OcrImportState.Processing        -> "Extracting transactions with AI…"
+            fileState is FileImportState.Parsing         -> "Reading file…"
+            fileState is FileImportState.OcrInProgress   -> "Scanned PDF — reading with AI…"
+            fileState is FileImportState.Importing       -> "Saving transactions…"
             else -> "Processing…"
         }
         Dialog(
@@ -151,6 +157,9 @@ fun ImportOptionsScreen(
                         "*/*"
                     ))
                 },
+                onPdf = {
+                    pdfPickerLauncher.launch(arrayOf("application/pdf"))
+                },
                 onReview = onNavigateToReview
             )
         }
@@ -165,6 +174,7 @@ private fun OptionsContent(
     onScreenshot: () -> Unit,
     onExcel: () -> Unit,
     onCsv: () -> Unit,
+    onPdf: () -> Unit,
     onReview: () -> Unit
 ) {
     Column(
@@ -203,6 +213,12 @@ private fun OptionsContent(
             description = "Comma-separated export from your bank or finance app.",
             onClick = onCsv
         )
+        ImportOptionCard(
+            icon = Icons.Default.PictureAsPdf,
+            title = "PDF Bank Statement",
+            description = "Digital bank statement PDF. Text-based PDFs are read directly; scanned PDFs are processed with AI.",
+            onClick = onPdf
+        )
 
         Spacer(modifier = Modifier.weight(1f))
 
@@ -211,7 +227,7 @@ private fun OptionsContent(
                 Icon(Icons.Default.Lightbulb, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                 Spacer(modifier = Modifier.width(12.dp))
                 Text(
-                    "Supported banks: Hapoalim, Leumi, Discount, Mizrahi, Isracard, CAL, Max, and any standard export format.",
+                    "Supported formats: Excel, CSV, PDF (text & scanned). Banks: Hapoalim, Leumi, Discount, Mizrahi, Isracard, CAL, Max, and standard exports.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onPrimaryContainer
                 )

@@ -55,6 +55,24 @@ class GeminiOcrService @Inject constructor(
         }
     }
 
+    suspend fun extractTransactionsFromBitmap(bitmap: Bitmap): OcrResult {
+        return withContext(Dispatchers.IO) {
+            try {
+                val response = geminiModel.generateContent(
+                    content {
+                        image(bitmap)
+                        text(buildOcrPrompt())
+                    }
+                )
+                val extractedText = response.text
+                    ?: return@withContext OcrResult.Error("No text extracted")
+                parseOcrResponse(extractedText)
+            } catch (e: Exception) {
+                OcrResult.Error("OCR failed: ${e.message}")
+            }
+        }
+    }
+
     /**
      * Extract text only from image (for general OCR)
      */
