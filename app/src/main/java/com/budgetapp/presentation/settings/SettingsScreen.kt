@@ -1,5 +1,6 @@
 package com.budgetapp.presentation.settings
 
+import android.content.Intent
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -7,18 +8,55 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.budgetapp.data.export.ExportFormat
+import com.budgetapp.data.export.ExportRange
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
     onNavigateBack: () -> Unit,
     onNavigateToCategories: () -> Unit,
-    viewModel: SettingsViewModel = hiltViewModel()
+    viewModel: SettingsViewModel = hiltViewModel(),
+    exportViewModel: ExportViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val exportState by exportViewModel.uiState.collectAsState()
+    val context = LocalContext.current
+
+    var showExportDialog by remember { mutableStateOf(false) }
+
+    // Launch share sheet whenever the ViewModel emits a share intent
+    LaunchedEffect(Unit) {
+        exportViewModel.shareEvent.collect { intent ->
+            context.startActivity(intent)
+        }
+    }
+
+    if (showExportDialog) {
+        ExportDialog(
+            isExporting = exportState.isExporting,
+            onExport = { format, range ->
+                showExportDialog = false
+                exportViewModel.export(format, range)
+            },
+            onDismiss = { showExportDialog = false }
+        )
+    }
+
+    if (exportState.error != null) {
+        AlertDialog(
+            onDismissRequest = exportViewModel::clearError,
+            title = { Text("Export failed") },
+            text = { Text(exportState.error!!) },
+            confirmButton = {
+                TextButton(onClick = exportViewModel::clearError) { Text("OK") }
+            }
+        )
+    }
 
     Scaffold(
         topBar = {
@@ -83,24 +121,19 @@ fun SettingsScreen(
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.primary
                     )
-
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column {
+                            Text("Last Sync", style = MaterialTheme.typography.bodyMedium)
                             Text(
-                                text = "Last Sync",
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                            Text(
-                                text = uiState.lastSyncFormatted,
+                                uiState.lastSyncFormatted,
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-
                         if (uiState.syncStatus.isSyncing) {
                             CircularProgressIndicator(modifier = Modifier.size(24.dp))
                         } else {
@@ -109,42 +142,18 @@ fun SettingsScreen(
                             }
                         }
                     }
-
                     if (uiState.syncStatus.pendingChanges > 0) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                Icons.Default.Info,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(20.dp)
-                            )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Info, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = "${uiState.syncStatus.pendingChanges} pending changes",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.primary
-                            )
+                            Text("${uiState.syncStatus.pendingChanges} pending changes", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
                         }
                     }
-
                     if (uiState.syncStatus.error != null) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                Icons.Default.Warning,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.error,
-                                modifier = Modifier.size(20.dp)
-                            )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Warning, null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(20.dp))
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = uiState.syncStatus.error!!,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.error
-                            )
+                            Text(uiState.syncStatus.error!!, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                         }
                     }
                 }
@@ -153,13 +162,11 @@ fun SettingsScreen(
             // Language
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
+                    modifier = Modifier.fillMaxWidth().padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Text(
-                        text = "Language / שפה / Язык",
+                        "Language / שפה / Язык",
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.primary
                     )
@@ -199,37 +206,133 @@ fun SettingsScreen(
             // App Settings
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
+                    modifier = Modifier.fillMaxWidth().padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Text(
-                        text = "App Settings",
+                        "App Settings",
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.primary
                     )
 
-                    TextButton(
-                        onClick = onNavigateToCategories,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.List, contentDescription = null)
-                                Spacer(modifier = Modifier.width(12.dp))
-                                Text("Manage Categories")
+                    SettingsRow(
+                        icon = Icons.Default.List,
+                        label = "Manage Categories",
+                        onClick = onNavigateToCategories
+                    )
+
+                    HorizontalDivider()
+
+                    SettingsRow(
+                        icon = Icons.Default.FileDownload,
+                        label = if (exportState.isExporting) "Exporting…" else "Export Transactions",
+                        onClick = { if (!exportState.isExporting) showExportDialog = true },
+                        trailing = {
+                            if (exportState.isExporting) {
+                                CircularProgressIndicator(modifier = Modifier.size(20.dp))
+                            } else {
+                                Icon(Icons.Default.KeyboardArrowRight, contentDescription = null)
                             }
-                            Icon(Icons.Default.KeyboardArrowRight, contentDescription = null)
+                        }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SettingsRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    onClick: () -> Unit,
+    trailing: @Composable (() -> Unit)? = null
+) {
+    TextButton(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(icon, contentDescription = null)
+                Spacer(modifier = Modifier.width(12.dp))
+                Text(label)
+            }
+            trailing?.invoke() ?: Icon(Icons.Default.KeyboardArrowRight, contentDescription = null)
+        }
+    }
+}
+
+@Composable
+private fun ExportDialog(
+    isExporting: Boolean,
+    onExport: (ExportFormat, ExportRange) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var selectedFormat by remember { mutableStateOf(ExportFormat.CSV) }
+    var selectedRange by remember { mutableStateOf(ExportRange.THIS_MONTH) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Export Transactions") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                // Format
+                Text("Format", style = MaterialTheme.typography.labelLarge)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ExportFormat.values().forEach { fmt ->
+                        FilterChip(
+                            selected = selectedFormat == fmt,
+                            onClick = { selectedFormat = fmt },
+                            label = {
+                                Text(when (fmt) {
+                                    ExportFormat.CSV -> "CSV"
+                                    ExportFormat.EXCEL -> "Excel (.xlsx)"
+                                })
+                            }
+                        )
+                    }
+                }
+
+                // Range
+                Text("Period", style = MaterialTheme.typography.labelLarge)
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    ExportRange.values().forEach { rng ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            RadioButton(
+                                selected = selectedRange == rng,
+                                onClick = { selectedRange = rng }
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = when (rng) {
+                                    ExportRange.ALL -> "All time"
+                                    ExportRange.THIS_MONTH -> "This month"
+                                    ExportRange.LAST_MONTH -> "Last month"
+                                    ExportRange.LAST_3_MONTHS -> "Last 3 months"
+                                    ExportRange.THIS_YEAR -> "This year"
+                                },
+                                style = MaterialTheme.typography.bodyMedium
+                            )
                         }
                     }
                 }
             }
-
+        },
+        confirmButton = {
+            Button(
+                onClick = { onExport(selectedFormat, selectedRange) },
+                enabled = !isExporting
+            ) {
+                Text("Export")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
         }
-    }
+    )
 }
