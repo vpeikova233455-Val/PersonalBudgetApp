@@ -4,10 +4,13 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import androidx.compose.runtime.Composable
+import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -20,10 +23,15 @@ import com.budgetapp.presentation.dashboard.DashboardScreen
 import com.budgetapp.presentation.settings.SettingsScreen
 import com.budgetapp.presentation.transaction.AddTransactionScreen
 import com.budgetapp.presentation.transaction.EditTransactionScreen
+import com.budgetapp.presentation.update.UpdateDialog
+import com.budgetapp.presentation.update.UpdateState
+import com.budgetapp.presentation.update.UpdateViewModel
 
 @Composable
 fun AppNavigation() {
     val navController = rememberNavController()
+    val updateViewModel: UpdateViewModel = hiltViewModel()
+    val updateState by updateViewModel.state.collectAsState()
 
     Box(modifier = Modifier.fillMaxSize()) {
         NavHost(
@@ -108,5 +116,9 @@ fun AppNavigation() {
                 .navigationBarsPadding()
                 .padding(start = 16.dp, bottom = 16.dp)
         )
+    }
+
+    if (updateState !is UpdateState.Idle) {
+        UpdateDialog(state = updateState, viewModel = updateViewModel)
     }
 }
