@@ -15,7 +15,8 @@ fun TransactionEntity.toDomain(category: Category): Transaction {
         category = category,
         date = date,
         isRecurring = isRecurring,
-        recurringId = recurringId
+        recurringId = recurringId,
+        bankName = bankName
     )
 }
 
@@ -32,6 +33,7 @@ fun Transaction.toEntity(deviceId: String): TransactionEntity {
         recurringId = recurringId,
         syncStatus = SyncStatus.PENDING,
         lastModifiedTimestamp = System.currentTimeMillis(),
-        deviceId = deviceId
+        deviceId = deviceId,
+        bankName = bankName
     )
 }

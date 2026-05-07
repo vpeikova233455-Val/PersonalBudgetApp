@@ -115,6 +115,11 @@ class FileImportViewModel @Inject constructor(
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private fun groupByMonth(transactions: List<ParsedTransaction>): List<MonthGroup> {
+        val duplicateKeys = transactions
+            .groupBy { "${it.date}_${it.amount}" }
+            .filter { it.value.size > 1 }
+            .keys
+
         val (dated, undated) = transactions.partition { it.date != null }
 
         val groups = dated
@@ -122,13 +127,15 @@ class FileImportViewModel @Inject constructor(
             .entries
             .sortedBy { it.key }
             .map { (key, txs) ->
+                val dupCount = txs.count { "${it.date}_${it.amount}" in duplicateKeys }
                 MonthGroup(
                     key = key,
                     displayName = formatMonthName(key),
                     transactions = txs,
                     totalAmount = txs.sumOf { it.amount },
                     expenseCount = txs.count { it.type == GeminiTransactionType.EXPENSE },
-                    incomeCount = txs.count { it.type == GeminiTransactionType.INCOME }
+                    incomeCount = txs.count { it.type == GeminiTransactionType.INCOME },
+                    duplicateCount = dupCount
                 )
             }
             .toMutableList()
@@ -187,5 +194,6 @@ data class MonthGroup(
     val totalAmount: Double,
     val expenseCount: Int,
     val incomeCount: Int,
-    val selected: Boolean = true
+    val selected: Boolean = true,
+    val duplicateCount: Int = 0
 )

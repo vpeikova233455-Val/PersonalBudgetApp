@@ -19,5 +19,6 @@ data class TransactionEntity(
     val syncStatus: SyncStatus = SyncStatus.PENDING,
     val lastModifiedTimestamp: Long = System.currentTimeMillis(),
     val deviceId: String,
-    val firestoreId: String? = null
+    val firestoreId: String? = null,
+    val bankName: String? = null
 )

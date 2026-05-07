@@ -40,24 +40,39 @@ class ReviewTransactionsViewModel @Inject constructor(
         viewModelScope.launch {
             pendingTransactionDao.getAllPending(userId)
                 .collect { pending ->
-                    _uiState.update {
-                        it.copy(
-                            pendingTransactions = pending.map { entity ->
-                                PendingTransactionUiModel(
-                                    id = entity.id,
-                                    description = entity.description ?: "Unknown",
-                                    formattedAmount = formatAmount(entity.amount ?: 0.0),
-                                    formattedDate = entity.date?.let { formatDate(it) },
-                                    type = entity.type?.name ?: "EXPENSE",
-                                    suggestedCategory = null,
-                                    confidence = entity.categoryConfidence ?: 0.5,
-                                    sourceType = entity.sourceType.name,
-                                    aiQuestions = entity.aiQuestions?.let { parseQuestions(it) }
-                                )
-                            },
-                            isLoading = false
+                    val models = pending.map { entity ->
+                        val suggestion = learnFromUserUseCase.getSuggestion(userId, entity.description ?: "")
+                        val suggestedCategoryName = suggestion?.let {
+                            categoryDao.getCategoryById(it.categoryId)?.name
+                        }
+                        val learningState = when {
+                            suggestion == null -> LearningState.Unknown
+                            suggestion.isAutomatic -> LearningState.Known(
+                                suggestion.categoryId, suggestedCategoryName ?: "", suggestion.usageCount, isAutomatic = true
+                            )
+                            else -> LearningState.Known(
+                                suggestion.categoryId, suggestedCategoryName ?: "", suggestion.usageCount, isAutomatic = false
+                            )
+                        }
+                        PendingTransactionUiModel(
+                            id = entity.id,
+                            description = entity.description ?: "Unknown",
+                            formattedAmount = formatAmount(entity.amount ?: 0.0),
+                            formattedDate = entity.date?.let { formatDate(it) },
+                            type = entity.type?.name ?: "EXPENSE",
+                            suggestedCategoryId = suggestion?.categoryId,
+                            suggestedCategoryName = suggestedCategoryName,
+                            selectedCategoryId = if (suggestion?.isAutomatic == true) suggestion.categoryId
+                                                 else suggestion?.categoryId,
+                            selectedCategoryName = suggestedCategoryName,
+                            confidence = entity.categoryConfidence ?: 0.5,
+                            sourceType = entity.sourceType.name,
+                            aiQuestions = entity.aiQuestions?.let { parseQuestions(it) },
+                            learningState = learningState,
+                            wantsAutomatic = false
                         )
                     }
+                    _uiState.update { it.copy(pendingTransactions = models, isLoading = false) }
                 }
         }
     }
@@ -67,28 +82,47 @@ class ReviewTransactionsViewModel @Inject constructor(
             categoryDao.getAllCategories()
                 .collect { categories ->
                     _uiState.update {
-                        it.copy(
-                            categories = categories.map { cat ->
-                                CategoryUiModel(id = cat.id, name = cat.name)
-                            }
-                        )
+                        it.copy(categories = categories.map { cat -> CategoryUiModel(id = cat.id, name = cat.name) })
                     }
                 }
+        }
+    }
+
+    fun selectCategory(pendingId: Long, categoryId: Long, categoryName: String) {
+        _uiState.update { state ->
+            state.copy(
+                pendingTransactions = state.pendingTransactions.map { tx ->
+                    if (tx.id == pendingId) tx.copy(selectedCategoryId = categoryId, selectedCategoryName = categoryName)
+                    else tx
+                }
+            )
+        }
+    }
+
+    fun toggleWantsAutomatic(pendingId: Long) {
+        _uiState.update { state ->
+            state.copy(
+                pendingTransactions = state.pendingTransactions.map { tx ->
+                    if (tx.id == pendingId) tx.copy(wantsAutomatic = !tx.wantsAutomatic)
+                    else tx
+                }
+            )
         }
     }
 
     fun approvePendingTransaction(pendingId: Long) {
         viewModelScope.launch {
             val pending = pendingTransactionDao.getPendingById(pendingId) ?: return@launch
+            val uiModel = _uiState.value.pendingTransactions.find { it.id == pendingId } ?: return@launch
 
-            // Create actual transaction
+            val categoryId = uiModel.selectedCategoryId ?: 1L
             val transaction = TransactionEntity(
                 id = UUID.randomUUID().toString(),
                 userId = userId,
                 type = pending.type ?: com.budgetapp.data.local.entity.TransactionType.EXPENSE,
                 amount = pending.amount ?: 0.0,
                 description = pending.description ?: "",
-                categoryId = pending.suggestedCategory ?: 1L,
+                categoryId = categoryId,
                 date = pending.date ?: System.currentTimeMillis(),
                 isRecurring = false,
                 recurringId = null,
@@ -100,23 +134,24 @@ class ReviewTransactionsViewModel @Inject constructor(
 
             transactionDao.insertTransaction(transaction)
 
-            // Learn from user's approval
-            if (pending.suggestedCategory != null) {
-                learnFromUserUseCase(
-                    userId = userId,
-                    description = pending.description ?: "",
-                    selectedCategoryId = pending.suggestedCategory
-                )
-            }
+            learnFromUserUseCase(
+                userId = userId,
+                description = pending.description ?: "",
+                selectedCategoryId = categoryId,
+                setAutomatic = uiModel.wantsAutomatic
+            )
 
-            // Delete pending
             pendingTransactionDao.deletePendingById(pendingId)
 
-            // Check if all approved
             if (_uiState.value.pendingTransactions.size == 1) {
                 _uiState.update { it.copy(allApproved = true) }
             }
         }
+    }
+
+    fun approveAll() {
+        val ids = _uiState.value.pendingTransactions.map { it.id }
+        ids.forEach { approvePendingTransaction(it) }
     }
 
     fun deletePendingTransaction(pendingId: Long) {
@@ -125,33 +160,55 @@ class ReviewTransactionsViewModel @Inject constructor(
         }
     }
 
-    fun startEditingTransaction(pendingId: Long) {
-        // TODO: Navigate to edit screen
-    }
-
     private fun formatAmount(amount: Double): String {
         val formatter = NumberFormat.getCurrencyInstance()
         formatter.currency = java.util.Currency.getInstance("ILS")
         return formatter.format(amount)
     }
 
-    private fun formatDate(timestamp: Long): String {
-        val formatter = SimpleDateFormat("MMM dd, yyyy", Locale.US)
-        return formatter.format(Date(timestamp))
-    }
+    private fun formatDate(timestamp: Long): String =
+        SimpleDateFormat("MMM dd, yyyy", Locale.US).format(Date(timestamp))
 
-    private fun parseQuestions(json: String): List<String>? {
-        return try {
-            // Simple JSON parsing - in production use kotlinx.serialization
-            json.trim('[', ']')
-                .split(",")
-                .map { it.trim('"', ' ') }
-                .filter { it.isNotEmpty() }
-        } catch (e: Exception) {
-            null
-        }
-    }
+    private fun parseQuestions(json: String): List<String>? = try {
+        json.trim('[', ']').split(",").map { it.trim('"', ' ') }.filter { it.isNotEmpty() }
+    } catch (_: Exception) { null }
 }
+
+// ── Learning state ─────────────────────────────────────────────────────────────
+
+sealed class LearningState {
+    object Unknown : LearningState()
+    data class Known(
+        val categoryId: Long,
+        val categoryName: String,
+        val timesSeenBefore: Int,
+        val isAutomatic: Boolean
+    ) : LearningState()
+}
+
+// ── UI models ──────────────────────────────────────────────────────────────────
+
+data class PendingTransactionUiModel(
+    val id: Long,
+    val description: String,
+    val formattedAmount: String,
+    val formattedDate: String?,
+    val type: String,
+    val suggestedCategoryId: Long?,
+    val suggestedCategoryName: String?,
+    val selectedCategoryId: Long?,
+    val selectedCategoryName: String?,
+    val confidence: Double,
+    val sourceType: String,
+    val aiQuestions: List<String>?,
+    val learningState: LearningState,
+    val wantsAutomatic: Boolean = false
+)
+
+data class CategoryUiModel(
+    val id: Long,
+    val name: String
+)
 
 data class ReviewTransactionsUiState(
     val pendingTransactions: List<PendingTransactionUiModel> = emptyList(),

@@ -18,44 +18,36 @@ class LearnFromUserUseCase @Inject constructor(
     suspend operator fun invoke(
         userId: String,
         description: String,
-        selectedCategoryId: Long
+        selectedCategoryId: Long,
+        setAutomatic: Boolean = false
     ) {
-        // Extract merchant pattern from description
-        val merchantPattern = extractMerchantPattern(description)
+        val merchantPattern = extractMerchantPattern(description) ?: return
 
-        if (merchantPattern.isNullOrBlank()) {
-            // Can't learn from generic descriptions
-            return
-        }
-
-        // Check if preference already exists
         val existingPreference = userPreferenceDao.getPreferenceByPattern(
             userId = userId,
             pattern = merchantPattern
         )
 
         if (existingPreference != null) {
-            // Update existing preference
             if (existingPreference.categoryId == selectedCategoryId) {
-                // Same category - increment usage count (reinforcement)
                 userPreferenceDao.updatePreference(
                     existingPreference.copy(
                         usageCount = existingPreference.usageCount + 1,
-                        lastUsedTimestamp = System.currentTimeMillis()
+                        lastUsedTimestamp = System.currentTimeMillis(),
+                        isAutomatic = if (setAutomatic) true else existingPreference.isAutomatic
                     )
                 )
             } else {
-                // Different category - user changed their mind, update preference
                 userPreferenceDao.updatePreference(
                     existingPreference.copy(
                         categoryId = selectedCategoryId,
-                        usageCount = 1, // Reset count for new category
-                        lastUsedTimestamp = System.currentTimeMillis()
+                        usageCount = 1,
+                        lastUsedTimestamp = System.currentTimeMillis(),
+                        isAutomatic = false
                     )
                 )
             }
         } else {
-            // Create new preference
             userPreferenceDao.insertPreference(
                 UserCategoryPreference(
                     userId = userId,
@@ -66,6 +58,11 @@ class LearnFromUserUseCase @Inject constructor(
                 )
             )
         }
+    }
+
+    suspend fun getSuggestion(userId: String, description: String): UserCategoryPreference? {
+        val pattern = extractMerchantPattern(description) ?: return null
+        return userPreferenceDao.getPreferenceByPattern(userId, pattern)
     }
 
     /**

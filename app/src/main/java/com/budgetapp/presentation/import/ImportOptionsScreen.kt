@@ -330,6 +330,9 @@ private fun MonthCard(month: MonthGroup, onToggle: () -> Unit) {
                         if (month.incomeCount > 0)
                             Text("${month.incomeCount} income", style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.primary)
+                        if (month.duplicateCount > 0)
+                            Text("${month.duplicateCount} possible duplicates", style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.tertiary)
                     }
                 }
             }

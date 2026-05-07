@@ -10,5 +10,6 @@ data class UserCategoryPreference(
     val merchantPattern: String, // e.g., "netflix", "starbucks"
     val categoryId: Long,
     val usageCount: Int = 1,
-    val lastUsedTimestamp: Long = System.currentTimeMillis()
+    val lastUsedTimestamp: Long = System.currentTimeMillis(),
+    val isAutomatic: Boolean = false
 )

@@ -12,6 +12,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.budgetapp.presentation.components.CategoryPickerDialog
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -21,6 +22,10 @@ fun ReviewTransactionsScreen(
     viewModel: ReviewTransactionsViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
+
+    LaunchedEffect(uiState.allApproved) {
+        if (uiState.allApproved) onAllApproved()
+    }
 
     Scaffold(
         topBar = {
@@ -33,11 +38,9 @@ fun ReviewTransactionsScreen(
                 },
                 actions = {
                     if (uiState.pendingTransactions.isNotEmpty()) {
-                        Text(
-                            text = "${uiState.pendingTransactions.size} pending",
-                            style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.padding(end = 16.dp)
-                        )
+                        TextButton(onClick = { viewModel.approveAll() }) {
+                            Text("Approve All")
+                        }
                     }
                 }
             )
@@ -45,177 +48,202 @@ fun ReviewTransactionsScreen(
     ) { padding ->
         when {
             uiState.isLoading -> {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(padding),
-                    contentAlignment = Alignment.Center
-                ) {
+                Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator()
                 }
             }
 
             uiState.pendingTransactions.isEmpty() -> {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(padding),
-                    contentAlignment = Alignment.Center
-                ) {
+                Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Icon(
-                            Icons.Default.CheckCircle,
-                            contentDescription = null,
+                            Icons.Default.CheckCircle, null,
                             modifier = Modifier.size(64.dp),
                             tint = MaterialTheme.colorScheme.primary
                         )
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Text(
-                            "All transactions reviewed!",
-                            style = MaterialTheme.typography.titleMedium
-                        )
+                        Spacer(Modifier.height(16.dp))
+                        Text("All transactions reviewed!", style = MaterialTheme.typography.titleMedium)
                     }
                 }
             }
 
             else -> {
                 LazyColumn(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(padding),
+                    modifier = Modifier.fillMaxSize().padding(padding),
                     contentPadding = PaddingValues(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    items(uiState.pendingTransactions) { pending ->
+                    items(uiState.pendingTransactions, key = { it.id }) { pending ->
                         PendingTransactionCard(
                             pending = pending,
                             categories = uiState.categories,
                             onApprove = { viewModel.approvePendingTransaction(pending.id) },
-                            onEdit = { viewModel.startEditingTransaction(pending.id) },
-                            onDelete = { viewModel.deletePendingTransaction(pending.id) }
+                            onDelete = { viewModel.deletePendingTransaction(pending.id) },
+                            onSelectCategory = { catId, catName ->
+                                viewModel.selectCategory(pending.id, catId, catName)
+                            },
+                            onToggleAutomatic = { viewModel.toggleWantsAutomatic(pending.id) }
                         )
                     }
                 }
-            }
-        }
-
-        // Show success message when all approved
-        LaunchedEffect(uiState.pendingTransactions.isEmpty() && !uiState.isLoading) {
-            if (uiState.allApproved) {
-                onAllApproved()
             }
         }
     }
 }
 
+// ── Pending card ──────────────────────────────────────────────────────────────
+
 @Composable
-fun PendingTransactionCard(
+private fun PendingTransactionCard(
     pending: PendingTransactionUiModel,
     categories: List<CategoryUiModel>,
     onApprove: () -> Unit,
-    onEdit: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    onSelectCategory: (Long, String) -> Unit,
+    onToggleAutomatic: () -> Unit
 ) {
+    var showCategoryPicker by remember { mutableStateOf(false) }
+
+    if (showCategoryPicker) {
+        val domainCategories = categories.map {
+            com.budgetapp.domain.model.Category(id = it.id, name = it.name, icon = "💰", color = "#607D8B")
+        }
+        CategoryPickerDialog(
+            categories = domainCategories,
+            selectedCategory = domainCategories.find { it.id == pending.selectedCategoryId },
+            onCategorySelect = { cat ->
+                onSelectCategory(cat.id, cat.name)
+                showCategoryPicker = false
+            },
+            onDismiss = { showCategoryPicker = false }
+        )
+    }
+
+    val isAutoApplied = pending.learningState is LearningState.Known &&
+        (pending.learningState as LearningState.Known).isAutomatic
+
     Card(
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = if (isAutoApplied)
+                MaterialTheme.colorScheme.secondaryContainer
+            else MaterialTheme.colorScheme.surface
+        )
     ) {
-        Column(
-            modifier = Modifier.padding(16.dp)
-        ) {
-            // Confidence indicator
+        Column(modifier = Modifier.padding(16.dp)) {
+
+            // Header row: source + amount + date
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment = Alignment.Top
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        when {
-                            pending.confidence >= 0.8 -> Icons.Default.CheckCircle
-                            pending.confidence >= 0.5 -> Icons.Default.Warning
-                            else -> Icons.Default.HelpOutline
-                        },
-                        contentDescription = null,
-                        tint = when {
-                            pending.confidence >= 0.8 -> MaterialTheme.colorScheme.primary
-                            pending.confidence >= 0.5 -> MaterialTheme.colorScheme.secondary
-                            else -> MaterialTheme.colorScheme.error
-                        },
-                        modifier = Modifier.size(20.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        "${(pending.confidence * 100).toInt()}% confident",
-                        style = MaterialTheme.typography.bodySmall
+                        pending.description,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        pending.formattedDate ?: "Date unknown",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
                 Text(
-                    pending.sourceType,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // Description
-            Text(
-                pending.description,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold
-            )
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // Amount and type
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text(
                     pending.formattedAmount,
-                    style = MaterialTheme.typography.titleLarge,
-                    color = when (pending.type) {
-                        "INCOME" -> MaterialTheme.colorScheme.primary
-                        else -> MaterialTheme.colorScheme.error
-                    }
-                )
-                Text(
-                    pending.formattedDate ?: "Date unknown",
-                    style = MaterialTheme.typography.bodyMedium
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = if (pending.type == "INCOME")
+                        MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.error
                 )
             }
 
-            // Suggested category
-            if (pending.suggestedCategory != null) {
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    "Suggested: ${pending.suggestedCategory}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.secondary
-                )
-            }
+            Spacer(Modifier.height(12.dp))
 
-            // AI questions (if any)
-            pending.aiQuestions?.let { questions ->
-                if (questions.isNotEmpty()) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Card(
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.secondaryContainer
+            // ── Learning-state-aware category section ──────────────────────────
+
+            when (val ls = pending.learningState) {
+                is LearningState.Unknown -> {
+                    // First time — show picker button
+                    if (pending.selectedCategoryId != null) {
+                        CategoryChip(
+                            name = pending.selectedCategoryName ?: "",
+                            onClick = { showCategoryPicker = true }
                         )
-                    ) {
-                        Column(modifier = Modifier.padding(12.dp)) {
-                            Text(
-                                "AI needs clarification:",
-                                style = MaterialTheme.typography.bodySmall,
-                                fontWeight = FontWeight.Bold
+                    } else {
+                        OutlinedButton(
+                            onClick = { showCategoryPicker = true },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Default.Category, null)
+                            Spacer(Modifier.width(8.dp))
+                            Text("Assign Category")
+                        }
+                    }
+                }
+
+                is LearningState.Known -> {
+                    if (ls.isAutomatic) {
+                        // Auto-applied
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.AutoAwesome, null,
+                                tint = MaterialTheme.colorScheme.secondary,
+                                modifier = Modifier.size(18.dp)
                             )
-                            questions.forEach { question ->
+                            Text(
+                                "Auto: ${ls.categoryName}",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.secondary
+                            )
+                            TextButton(onClick = { showCategoryPicker = true }) {
+                                Text("Change")
+                            }
+                        }
+                    } else {
+                        // Seen before — suggest and offer confirm/change
+                        val timesLabel = if (ls.timesSeenBefore == 1) "last time" else "${ls.timesSeenBefore} times before"
+                        Text(
+                            "You assigned \"${ls.categoryName}\" $timesLabel",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        if (pending.selectedCategoryId != null && pending.selectedCategoryId != ls.categoryId) {
+                            // User changed the category
+                            CategoryChip(name = pending.selectedCategoryName ?: "", onClick = { showCategoryPicker = true })
+                        } else {
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Button(onClick = {
+                                    onSelectCategory(ls.categoryId, ls.categoryName)
+                                }, modifier = Modifier.weight(1f)) {
+                                    Text("Same: ${ls.categoryName}")
+                                }
+                                OutlinedButton(onClick = { showCategoryPicker = true }, modifier = Modifier.weight(1f)) {
+                                    Text("Change")
+                                }
+                            }
+                        }
+
+                        // On 3rd+ encounter offer "always auto"
+                        if (ls.timesSeenBefore >= 2) {
+                            Spacer(Modifier.height(6.dp))
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Checkbox(
+                                    checked = pending.wantsAutomatic,
+                                    onCheckedChange = { onToggleAutomatic() }
+                                )
                                 Text(
-                                    "• $question",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    modifier = Modifier.padding(top = 4.dp)
+                                    "Always auto-categorize as \"${pending.selectedCategoryName ?: ls.categoryName}\"",
+                                    style = MaterialTheme.typography.bodySmall
                                 )
                             }
                         }
@@ -223,35 +251,35 @@ fun PendingTransactionCard(
                 }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            // AI questions (if any)
+            pending.aiQuestions?.takeIf { it.isNotEmpty() }?.let { questions ->
+                Spacer(Modifier.height(8.dp))
+                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text("AI notes:", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
+                        questions.forEach { q ->
+                            Text("• $q", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp))
+                        }
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
 
             // Action buttons
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                OutlinedButton(
-                    onClick = onDelete,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Icon(Icons.Default.Delete, contentDescription = null)
-                    Spacer(modifier = Modifier.width(4.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = onDelete, modifier = Modifier.weight(1f)) {
+                    Icon(Icons.Default.Delete, null)
+                    Spacer(Modifier.width(4.dp))
                     Text("Delete")
-                }
-                OutlinedButton(
-                    onClick = onEdit,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Icon(Icons.Default.Edit, contentDescription = null)
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Edit")
                 }
                 Button(
                     onClick = onApprove,
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier.weight(1f),
+                    enabled = pending.selectedCategoryId != null || isAutoApplied
                 ) {
-                    Icon(Icons.Default.Check, contentDescription = null)
-                    Spacer(modifier = Modifier.width(4.dp))
+                    Icon(Icons.Default.Check, null)
+                    Spacer(Modifier.width(4.dp))
                     Text("Approve")
                 }
             }
@@ -259,20 +287,13 @@ fun PendingTransactionCard(
     }
 }
 
-// UI Models
-data class PendingTransactionUiModel(
-    val id: Long,
-    val description: String,
-    val formattedAmount: String,
-    val formattedDate: String?,
-    val type: String,
-    val suggestedCategory: String?,
-    val confidence: Double,
-    val sourceType: String,
-    val aiQuestions: List<String>?
-)
-
-data class CategoryUiModel(
-    val id: Long,
-    val name: String
-)
+@Composable
+private fun CategoryChip(name: String, onClick: () -> Unit) {
+    FilterChip(
+        selected = true,
+        onClick = onClick,
+        label = { Text(name) },
+        leadingIcon = { Icon(Icons.Default.Category, null, modifier = Modifier.size(16.dp)) },
+        trailingIcon = { Icon(Icons.Default.Edit, null, modifier = Modifier.size(14.dp)) }
+    )
+}
