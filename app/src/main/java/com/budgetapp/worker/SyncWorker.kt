@@ -1,45 +1,42 @@
 package com.budgetapp.worker
 
 import android.content.Context
-import androidx.hilt.work.HiltWorker
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.budgetapp.core.util.Result as AppResult
 import com.budgetapp.domain.repository.SyncRepository
-import dagger.assisted.Assisted
-import dagger.assisted.AssistedInject
+import dagger.hilt.EntryPoint
+import dagger.hilt.InstallIn
+import dagger.hilt.android.EntryPointAccessors
+import dagger.hilt.components.SingletonComponent
 
-@HiltWorker
-class SyncWorker @AssistedInject constructor(
-    @Assisted context: Context,
-    @Assisted workerParams: WorkerParameters,
-    private val syncRepository: SyncRepository
+class SyncWorker(
+    context: Context,
+    workerParams: WorkerParameters
 ) : CoroutineWorker(context, workerParams) {
+
+    @EntryPoint
+    @InstallIn(SingletonComponent::class)
+    interface SyncWorkerEntryPoint {
+        fun syncRepository(): SyncRepository
+    }
+
+    private val syncRepository: SyncRepository by lazy {
+        EntryPointAccessors.fromApplication(
+            applicationContext,
+            SyncWorkerEntryPoint::class.java
+        ).syncRepository()
+    }
 
     override suspend fun doWork(): Result {
         return try {
-            // Perform bidirectional sync
-            when (val result = syncRepository.syncAll()) {
-                is AppResult.Success -> {
-                    Result.success()
-                }
-                is AppResult.Error -> {
-                    // Retry on error (max 3 attempts by WorkManager)
-                    if (runAttemptCount < 3) {
-                        Result.retry()
-                    } else {
-                        Result.failure()
-                    }
-                }
+            when (syncRepository.syncAll()) {
+                is AppResult.Success -> Result.success()
+                is AppResult.Error -> if (runAttemptCount < 3) Result.retry() else Result.failure()
                 is AppResult.Loading -> Result.retry()
             }
         } catch (e: Exception) {
-            // Retry on exception (max 3 attempts)
-            if (runAttemptCount < 3) {
-                Result.retry()
-            } else {
-                Result.failure()
-            }
+            if (runAttemptCount < 3) Result.retry() else Result.failure()
         }
     }
 }

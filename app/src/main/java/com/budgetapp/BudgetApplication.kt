@@ -1,8 +1,6 @@
 package com.budgetapp
 
 import android.app.Application
-import androidx.hilt.work.HiltWorkerFactory
-import androidx.work.Configuration
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
@@ -11,13 +9,9 @@ import dagger.hilt.android.HiltAndroidApp
 import java.io.PrintWriter
 import java.io.StringWriter
 import java.util.concurrent.TimeUnit
-import javax.inject.Inject
 
 @HiltAndroidApp
-class BudgetApplication : Application(), Configuration.Provider {
-
-    @Inject
-    lateinit var workerFactory: HiltWorkerFactory
+class BudgetApplication : Application() {
 
     override fun onCreate() {
         setupCrashHandler()
@@ -25,20 +19,13 @@ class BudgetApplication : Application(), Configuration.Provider {
         setupBackgroundSync()
     }
 
-    override val workManagerConfiguration: Configuration
-        get() = Configuration.Builder()
-            .setMinimumLoggingLevel(android.util.Log.INFO)
-            .setWorkerFactory(workerFactory)
-            .build()
-
     private fun setupCrashHandler() {
         val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
             try {
                 val sw = StringWriter()
                 throwable.printStackTrace(PrintWriter(sw))
-                val crashLog = "Thread: ${thread.name}\n$sw"
-                java.io.File(filesDir, "last_crash.txt").writeText(crashLog)
+                java.io.File(filesDir, "last_crash.txt").writeText("Thread: ${thread.name}\n$sw")
             } catch (_: Exception) {}
             defaultHandler?.uncaughtException(thread, throwable)
         }
