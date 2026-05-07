@@ -2,17 +2,28 @@ package com.budgetapp.presentation.theme
 
 import androidx.compose.ui.graphics.Color
 
-val Purple80 = Color(0xFFD0BCFF)
-val PurpleGrey80 = Color(0xFFCCC2DC)
-val Pink80 = Color(0xFFEFB8C8)
+// Stitch brand colors
+val BrandBlue = Color(0xFF1142D4)
+val BrandBlueDark = Color(0xFF0D35AA)
+val BrandBlueLight = Color(0xFF4D6DDE)
 
-val Purple40 = Color(0xFF6650a4)
-val PurpleGrey40 = Color(0xFF625b71)
-val Pink40 = Color(0xFF7D5260)
+// Backgrounds
+val BackgroundLight = Color(0xFFF6F6F8)
+val BackgroundDark = Color(0xFF101522)
+val SurfaceDark = Color(0xFF1C2537)
 
-// Budget App Colors
-val IncomeGreen = Color(0xFF4CAF50)
-val ExpenseRed = Color(0xFFF44336)
-val BalanceBlue = Color(0xFF2196F3)
+// Semantic colors
+val IncomeGreen = Color(0xFF26A69A)
+val ExpenseRed = Color(0xFFEF5350)
+val BalanceBlue = BrandBlue
 val WarningOrange = Color(0xFFFF9800)
 val DangerRed = Color(0xFFD32F2F)
+
+// Category palette (used for icon containers)
+val CategoryOrange = Color(0xFFFF7043)
+val CategoryBlue = Color(0xFF42A5F5)
+val CategoryPurple = Color(0xFFAB47BC)
+val CategoryEmerald = Color(0xFF26A69A)
+val CategoryRed = Color(0xFFEF5350)
+val CategoryGreen = Color(0xFF66BB6A)
+val CategoryYellow = Color(0xFFFFCA28)

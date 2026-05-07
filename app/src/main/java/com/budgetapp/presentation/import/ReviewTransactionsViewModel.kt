@@ -72,7 +72,13 @@ class ReviewTransactionsViewModel @Inject constructor(
                             wantsAutomatic = false
                         )
                     }
+                    val wasLoading = _uiState.value.isLoading
+                    val hadItems = _uiState.value.pendingTransactions.isNotEmpty()
                     _uiState.update { it.copy(pendingTransactions = models, isLoading = false) }
+                    // Trigger done when list goes from non-empty → empty (i.e., all approved)
+                    if (!wasLoading && hadItems && models.isEmpty()) {
+                        _uiState.update { it.copy(allApproved = true) }
+                    }
                 }
         }
     }
@@ -142,10 +148,7 @@ class ReviewTransactionsViewModel @Inject constructor(
             )
 
             pendingTransactionDao.deletePendingById(pendingId)
-
-            if (_uiState.value.pendingTransactions.size == 1) {
-                _uiState.update { it.copy(allApproved = true) }
-            }
+            // allApproved is triggered by loadPendingTransactions() when DB list becomes empty
         }
     }
 
