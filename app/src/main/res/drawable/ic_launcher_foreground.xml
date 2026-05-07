@@ -4,12 +4,19 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <group android:scaleX="0.046875"
-        android:scaleY="0.046875"
-        android:translateX="29.16"
-        android:translateY="29.16">
+    <!--
+        Material Design "format_bold" icon (bold B) scaled 5× and centered
+        in the 108×108 adaptive-icon foreground safe zone.
+        fillType="evenOdd" creates the inner counter-spaces of the letter.
+    -->
+    <group
+        android:scaleX="5"
+        android:scaleY="5"
+        android:translateX="-6.6"
+        android:translateY="-1">
         <path
             android:fillColor="#FFFFFF"
-            android:pathData="M12,2C6.48,2 2,6.48 2,12s4.48,10 10,10 10,-4.48 10,-10S17.52,2 12,2zM13.41,18.09v0.58h-2.83v-0.58c-1.35,-0.15 -2.69,-0.61 -3.65,-1.35l1.19,-1.88c0.77,0.54 1.84,1 2.96,1 0.99,0 1.65,-0.35 1.65,-0.99 0,-0.56 -0.49,-0.95 -1.77,-1.3l-0.83,-0.23c-1.77,-0.49 -3.11,-1.37 -3.11,-3.11 0,-1.54 1.14,-2.83 2.96,-3.18V6.91h2.83v0.58c1.12,0.15 2.12,0.5 2.96,1.08l-1.11,1.84c-0.68,-0.44 -1.53,-0.78 -2.52,-0.78 -0.99,0 -1.49,0.39 -1.49,0.91 0,0.56 0.53,0.86 1.77,1.23l0.83,0.23c2.04,0.58 3.11,1.44 3.11,3.17C16.35,16.8 15.15,17.94 13.41,18.09z"/>
+            android:fillType="evenOdd"
+            android:pathData="M15.6,10.79c0.97,-0.67 1.65,-1.77 1.65,-2.79 0,-2.26 -1.75,-4 -4,-4H7v14h7.04c2.09,0 3.71,-1.7 3.71,-3.79 0,-1.52 -0.86,-2.82 -2.15,-3.42zM10,6.5h3c0.83,0 1.5,0.67 1.5,1.5s-0.67,1.5 -1.5,1.5h-3v-3zm3.5,9H10v-3h3.5c0.83,0 1.5,0.67 1.5,1.5s-0.67,1.5 -1.5,1.5z"/>
     </group>
 </vector>
