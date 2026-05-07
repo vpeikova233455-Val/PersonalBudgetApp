@@ -298,17 +298,19 @@ class FileParserService @Inject constructor(
         if (cleaned.matches(Regex("\\d{4}-\\d{2}-\\d{2}"))) return cleaned
 
         val formats = listOf(
-            "dd/MM/yyyy", "d/M/yyyy",   // Israeli / European
-            "MM/dd/yyyy", "M/d/yyyy",   // US
-            "dd.MM.yyyy", "d.M.yyyy",   // Israeli dot-separated
+            "dd/MM/yyyy", "d/M/yyyy",       // Israeli / European
+            "MM/dd/yyyy", "M/d/yyyy",       // US
+            "dd.MM.yyyy", "d.M.yyyy",       // Israeli / Russian dot-separated
             "dd-MM-yyyy", "d-M-yyyy",
             "yyyy-MM-dd", "yyyy/MM/dd",
             "dd/MM/yy",   "d/M/yy",
-            "dd.MM.yy",   "d.M.yy",
+            "dd.MM.yy",   "d.M.yy",         // Russian short year
             "MMM dd, yyyy", "dd MMM yyyy",
             "dd-MMM-yyyy",
             "yyyy-MM-dd HH:mm", "dd/MM/yyyy HH:mm",
-            "dd/MM/yyyy HH:mm:ss"
+            "dd/MM/yyyy HH:mm:ss",
+            "dd.MM.yyyy HH:mm",             // Russian with time
+            "dd.MM.yyyy HH:mm:ss"
         )
 
         for (fmt in formats) {
@@ -325,23 +327,58 @@ class FileParserService @Inject constructor(
     // ── Keywords ──────────────────────────────────────────────────────────────
 
     companion object {
-        // English + Hebrew column header keywords
-        private val DATE_KEYWORDS    = listOf("date", "תאריך", "datum", "fecha")
-        private val DESC_KEYWORDS    = listOf(
+        // English + Hebrew + Russian column header keywords
+        private val DATE_KEYWORDS = listOf(
+            // English
+            "date", "datum", "fecha",
+            // Hebrew
+            "תאריך",
+            // Russian
+            "дата", "дата операции", "дата проведения"
+        )
+        private val DESC_KEYWORDS = listOf(
+            // English
             "description", "details", "memo", "narrative", "payee", "merchant", "reference",
-            "תיאור", "פרטים", "שם בית עסק", "מוטב", "הערות", "אסמכתא"
+            // Hebrew
+            "תיאור", "פרטים", "שם בית עסק", "מוטב", "הערות", "אסמכתא",
+            // Russian
+            "описание", "назначение", "контрагент", "получатель", "отправитель",
+            "детали", "наименование", "комментарий"
         )
-        private val AMOUNT_KEYWORDS  = listOf("amount", "sum", "total", "סכום", "סה\"כ")
-        private val DEBIT_KEYWORDS   = listOf(
-            "debit", "withdrawal", "charge", "payment", "חיוב", "משיכה", "הוצאה"
+        private val AMOUNT_KEYWORDS = listOf(
+            // English
+            "amount", "sum", "total",
+            // Hebrew
+            "סכום", "סה\"כ",
+            // Russian
+            "сумма", "итого", "сумма операции"
         )
-        private val CREDIT_KEYWORDS  = listOf(
-            "credit", "deposit", "income", "זיכוי", "הפקדה", "הכנסה"
+        private val DEBIT_KEYWORDS = listOf(
+            // English
+            "debit", "withdrawal", "charge", "payment",
+            // Hebrew
+            "חיוב", "משיכה", "הוצאה",
+            // Russian
+            "дебет", "расход", "списание", "расходы"
         )
-        private val BALANCE_KEYWORDS = listOf("balance", "יתרה")
+        private val CREDIT_KEYWORDS = listOf(
+            // English
+            "credit", "deposit", "income",
+            // Hebrew
+            "זיכוי", "הפקדה", "הכנסה",
+            // Russian
+            "кредит", "доход", "поступление", "приход", "зачисление"
+        )
+        private val BALANCE_KEYWORDS = listOf(
+            "balance", "יתרה", "остаток", "баланс"
+        )
         private val SUMMARY_KEYWORDS = listOf(
+            // English
             "total", "subtotal", "grand total", "balance", "opening", "closing",
-            "סה\"כ", "סיכום", "יתרה", "פתיחה", "סגירה"
+            // Hebrew
+            "סה\"כ", "סיכום", "יתרה", "פתיחה", "סגירה",
+            // Russian
+            "итого", "баланс", "остаток", "исходящий", "входящий"
         )
     }
 }

@@ -88,12 +88,18 @@ class LearnFromUserUseCase @Inject constructor(
             return null // Too short to be useful
         }
 
-        // Remove common noise words
+        // Remove common noise words (English + Hebrew + Russian)
         val noiseWords = setOf(
+            // English
             "payment", "purchase", "transaction", "debit", "credit",
             "online", "pos", "card", "ending", "auth", "pending",
             "recurring", "automatic", "transfer", "deposit", "withdrawal",
-            "at", "in", "on", "from", "to", "the", "and", "or"
+            "at", "in", "on", "from", "to", "the", "and", "or",
+            // Hebrew
+            "חיוב", "זיכוי", "העברה", "תשלום", "פעולה",
+            // Russian
+            "платеж", "оплата", "перевод", "списание", "зачисление",
+            "карта", "онлайн", "автоматический"
         )
 
         val words = cleaned.split(Regex("\\s+"))

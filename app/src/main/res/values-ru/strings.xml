@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Личный бюджет</string>
+
+    <!-- Auth -->
+    <string name="email">Эл. почта</string>
+    <string name="password">Пароль</string>
+    <string name="login">Войти</string>
+    <string name="sign_up">Регистрация</string>
+    <string name="forgot_password">Забыли пароль?</string>
+    <string name="logout">Выйти</string>
+
+    <!-- Dashboard -->
+    <string name="dashboard">Обзор</string>
+    <string name="income">Доходы</string>
+    <string name="expenses">Расходы</string>
+    <string name="balance">Баланс</string>
+    <string name="recent_transactions">Последние транзакции</string>
+
+    <!-- Transactions -->
+    <string name="add_transaction">Добавить транзакцию</string>
+    <string name="edit_transaction">Изменить транзакцию</string>
+    <string name="transaction_type">Тип</string>
+    <string name="amount">Сумма</string>
+    <string name="description">Описание</string>
+    <string name="category">Категория</string>
+    <string name="date">Дата</string>
+    <string name="save">Сохранить</string>
+    <string name="cancel">Отмена</string>
+    <string name="delete">Удалить</string>
+
+    <!-- Categories -->
+    <string name="categories">Категории</string>
+    <string name="add_category">Добавить категорию</string>
+    <string name="edit_category">Изменить категорию</string>
+    <string name="category_name">Название категории</string>
+    <string name="select_icon">Выбрать иконку</string>
+    <string name="select_color">Выбрать цвет</string>
+
+    <!-- Budgets -->
+    <string name="budgets">Бюджеты</string>
+    <string name="budget_limit">Лимит бюджета</string>
+    <string name="alert_threshold">Порог оповещения</string>
+
+    <!-- Import -->
+    <string name="import_transactions">Импорт транзакций</string>
+    <string name="upload_screenshot">Загрузить скриншот</string>
+    <string name="upload_file">Загрузить файл</string>
+    <string name="review_approve">Проверить и подтвердить</string>
+
+    <!-- Settings -->
+    <string name="settings">Настройки</string>
+    <string name="profile">Профиль</string>
+    <string name="sync">Синхронизация</string>
+    <string name="export">Экспорт</string>
+    <string name="language">Язык</string>
+
+    <!-- Pension -->
+    <string name="pension">Пенсия</string>
+    <string name="pension_accounts">Пенсионные счета</string>
+
+    <!-- Common -->
+    <string name="loading">Загрузка…</string>
+    <string name="error">Ошибка</string>
+    <string name="retry">Повторить</string>
+    <string name="success">Успешно</string>
+</resources>

@@ -132,31 +132,36 @@ class GeminiOcrService @Inject constructor(
 
     private fun buildOcrPrompt(): String {
         return """
-            This is a screenshot of a bank statement or transaction list.
+            This is a bank statement or transaction list. It may be in English, Hebrew (עברית, right-to-left), or Russian (русский).
 
             Extract ALL transactions visible in the image. For each transaction, identify:
             1. Date (if visible)
-            2. Description/Merchant name
-            3. Amount
-            4. Whether it's income (+) or expense (-)
+            2. Description/Merchant name — preserve the original language (Hebrew, Russian, or English)
+            3. Amount (numeric value only, no currency symbols — strip ₪, ${'$'}, ₽, ILS, NIS, RUB, USD)
+            4. Whether it's income or expense
+
+            Hebrew guidance: text flows right-to-left. Column order may be reversed. Common labels:
+            תאריך=date, סכום=amount, חיוב=debit/expense, זיכוי=credit/income, תיאור=description.
+
+            Russian guidance: common labels:
+            Дата=date, Сумма=amount, Дебет=debit/expense, Кредит=credit/income, Описание=description, Назначение=purpose.
 
             Format your response as follows for EACH transaction:
             ---
             DATE: [YYYY-MM-DD or UNKNOWN]
-            DESCRIPTION: [merchant/description]
-            AMOUNT: [numeric value only, no currency symbols]
+            DESCRIPTION: [merchant/description in original language]
+            AMOUNT: [numeric value only]
             TYPE: [INCOME or EXPENSE]
-            CONFIDENCE: [0.0 to 1.0 - how confident are you about this extraction]
+            CONFIDENCE: [0.0 to 1.0]
             ---
 
             Rules:
-            - Extract every transaction you can see
-            - If date is not visible, use "UNKNOWN"
-            - Remove all currency symbols from amounts
-            - EXPENSE is money going out (negative, debits, purchases)
-            - INCOME is money coming in (positive, credits, deposits)
-            - Be conservative with confidence scores
-            - If you can't read something clearly, note it in the description and lower confidence
+            - Extract every transaction visible
+            - Preserve Hebrew and Russian text exactly as written — do not translate
+            - If a date is not visible use "UNKNOWN"
+            - EXPENSE = money going out (debit, חיוב, дебет, purchase, payment)
+            - INCOME = money coming in (credit, זיכוי, кредит, salary, deposit)
+            - If you cannot read something clearly, lower the confidence score
 
             Return ONLY the formatted transaction data, no additional text.
         """.trimIndent()

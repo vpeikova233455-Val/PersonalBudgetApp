@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">תקציב אישי</string>
+
+    <!-- Auth -->
+    <string name="email">אימייל</string>
+    <string name="password">סיסמה</string>
+    <string name="login">כניסה</string>
+    <string name="sign_up">הרשמה</string>
+    <string name="forgot_password">שכחתי סיסמה</string>
+    <string name="logout">יציאה</string>
+
+    <!-- Dashboard -->
+    <string name="dashboard">לוח בקרה</string>
+    <string name="income">הכנסות</string>
+    <string name="expenses">הוצאות</string>
+    <string name="balance">יתרה</string>
+    <string name="recent_transactions">עסקאות אחרונות</string>
+
+    <!-- Transactions -->
+    <string name="add_transaction">הוסף עסקה</string>
+    <string name="edit_transaction">ערוך עסקה</string>
+    <string name="transaction_type">סוג</string>
+    <string name="amount">סכום</string>
+    <string name="description">תיאור</string>
+    <string name="category">קטגוריה</string>
+    <string name="date">תאריך</string>
+    <string name="save">שמור</string>
+    <string name="cancel">ביטול</string>
+    <string name="delete">מחק</string>
+
+    <!-- Categories -->
+    <string name="categories">קטגוריות</string>
+    <string name="add_category">הוסף קטגוריה</string>
+    <string name="edit_category">ערוך קטגוריה</string>
+    <string name="category_name">שם קטגוריה</string>
+    <string name="select_icon">בחר סמל</string>
+    <string name="select_color">בחר צבע</string>
+
+    <!-- Budgets -->
+    <string name="budgets">תקציבים</string>
+    <string name="budget_limit">מגבלת תקציב</string>
+    <string name="alert_threshold">סף התראה</string>
+
+    <!-- Import -->
+    <string name="import_transactions">ייבוא עסקאות</string>
+    <string name="upload_screenshot">העלה צילום מסך</string>
+    <string name="upload_file">העלה קובץ</string>
+    <string name="review_approve">סקירה ואישור</string>
+
+    <!-- Settings -->
+    <string name="settings">הגדרות</string>
+    <string name="profile">פרופיל</string>
+    <string name="sync">סנכרון</string>
+    <string name="export">ייצוא</string>
+    <string name="language">שפה</string>
+
+    <!-- Pension -->
+    <string name="pension">פנסיה</string>
+    <string name="pension_accounts">חשבונות פנסיה</string>
+
+    <!-- Common -->
+    <string name="loading">טוען…</string>
+    <string name="error">שגיאה</string>
+    <string name="retry">נסה שוב</string>
+    <string name="success">הצלחה</string>
+</resources>

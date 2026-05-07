@@ -7,6 +7,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 
@@ -145,6 +146,52 @@ fun SettingsScreen(
                                 color = MaterialTheme.colorScheme.error
                             )
                         }
+                    }
+                }
+            }
+
+            // Language
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        text = "Language / שפה / Язык",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        listOf(
+                            Triple("en", "English", "🇺🇸"),
+                            Triple("he", "עברית", "🇮🇱"),
+                            Triple("ru", "Русский", "🇷🇺")
+                        ).forEach { (tag, label, flag) ->
+                            val selected = uiState.currentLanguage == tag
+                            FilterChip(
+                                selected = selected,
+                                onClick = { viewModel.setLanguage(tag) },
+                                label = {
+                                    Text(
+                                        "$flag $label",
+                                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
+                                    )
+                                },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+                    if (uiState.currentLanguage != "en") {
+                        Text(
+                            "The app will switch language immediately.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
             }

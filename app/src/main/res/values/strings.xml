@@ -53,6 +53,7 @@
     <string name="profile">Profile</string>
     <string name="sync">Sync</string>
     <string name="export">Export</string>
+    <string name="language">Language</string>
 
     <!-- Pension -->
     <string name="pension">Pension</string>

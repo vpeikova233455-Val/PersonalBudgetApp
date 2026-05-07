@@ -2,6 +2,8 @@ package com.budgetapp.presentation.settings
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.appcompat.app.AppCompatDelegate
+import androidx.core.os.LocaleListCompat
 import com.budgetapp.core.util.Result
 import com.budgetapp.core.util.toDateString
 import com.budgetapp.domain.repository.AuthRepository
@@ -18,7 +20,8 @@ data class SettingsUiState(
     val lastSyncFormatted: String = "Never",
     val isLoggingOut: Boolean = false,
     val logoutError: String? = null,
-    val logoutSuccess: Boolean = false
+    val logoutSuccess: Boolean = false,
+    val currentLanguage: String = "en"
 )
 
 @HiltViewModel
@@ -33,6 +36,7 @@ class SettingsViewModel @Inject constructor(
     init {
         loadUserInfo()
         observeSyncStatus()
+        loadCurrentLanguage()
     }
 
     private fun loadUserInfo() {
@@ -58,6 +62,20 @@ class SettingsViewModel @Inject constructor(
                 }
             }
         }
+    }
+
+    private fun loadCurrentLanguage() {
+        val locales = AppCompatDelegate.getApplicationLocales()
+        val tag = if (locales.isEmpty) "en" else locales[0]?.language ?: "en"
+        _uiState.update { it.copy(currentLanguage = tag) }
+    }
+
+    fun setLanguage(languageTag: String) {
+        AppCompatDelegate.setApplicationLocales(
+            if (languageTag == "en") LocaleListCompat.getEmptyLocaleList()
+            else LocaleListCompat.forLanguageTags(languageTag)
+        )
+        _uiState.update { it.copy(currentLanguage = languageTag) }
     }
 
     fun manualSync() {
