@@ -20,6 +20,9 @@ import com.budgetapp.presentation.auth.SplashScreen
 import com.budgetapp.presentation.bugreport.BugReportButton
 import com.budgetapp.presentation.category.CategoriesScreen
 import com.budgetapp.presentation.dashboard.DashboardScreen
+import com.budgetapp.presentation.import.ImportOptionsScreen
+import com.budgetapp.presentation.import.OcrImportViewModel
+import com.budgetapp.presentation.import.ReviewTransactionsScreen
 import com.budgetapp.presentation.settings.SettingsScreen
 import com.budgetapp.presentation.transaction.AddTransactionScreen
 import com.budgetapp.presentation.transaction.EditTransactionScreen
@@ -60,6 +63,9 @@ fun AppNavigation() {
                     },
                     onNavigateToSettings = {
                         navController.navigate("settings")
+                    },
+                    onNavigateToImport = {
+                        navController.navigate("import_options")
                     },
                     onTransactionClick = { transactionId ->
                         navController.navigate("edit_transaction/$transactionId")
@@ -105,6 +111,30 @@ fun AppNavigation() {
                     },
                     onNavigateToCategories = {
                         navController.navigate("categories")
+                    }
+                )
+            }
+
+            composable("import_options") {
+                val ocrViewModel: OcrImportViewModel = hiltViewModel()
+                ImportOptionsScreen(
+                    onNavigateBack = {
+                        navController.popBackStack()
+                    },
+                    ocrViewModel = ocrViewModel,
+                    onNavigateToReview = {
+                        navController.navigate("review_transactions")
+                    }
+                )
+            }
+
+            composable("review_transactions") {
+                ReviewTransactionsScreen(
+                    onNavigateBack = {
+                        navController.popBackStack()
+                    },
+                    onAllApproved = {
+                        navController.popBackStack()
                     }
                 )
             }

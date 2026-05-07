@@ -7,7 +7,8 @@ import java.util.Locale
 import java.util.UUID
 
 fun Double.toCurrency(): String {
-    val format = NumberFormat.getCurrencyInstance(Locale.getDefault())
+    val format = NumberFormat.getCurrencyInstance()
+    format.currency = java.util.Currency.getInstance("ILS")
     return format.format(this)
 }
 

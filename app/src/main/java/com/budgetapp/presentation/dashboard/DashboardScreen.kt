@@ -5,6 +5,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
@@ -14,6 +15,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -31,11 +35,13 @@ import com.budgetapp.presentation.theme.IncomeGreen
 fun DashboardScreen(
     onNavigateToAddTransaction: () -> Unit,
     onNavigateToSettings: () -> Unit,
+    onNavigateToImport: () -> Unit,
     onTransactionClick: (String) -> Unit,
     viewModel: DashboardViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val pullToRefreshState = rememberPullToRefreshState()
+    var menuExpanded by remember { mutableStateOf(false) }
 
     // Handle pull-to-refresh
     LaunchedEffect(pullToRefreshState.isRefreshing) {
@@ -56,8 +62,25 @@ fun DashboardScreen(
             TopAppBar(
                 title = { Text("Dashboard") },
                 navigationIcon = {
-                    IconButton(onClick = { /* TODO: Open drawer */ }) {
-                        Icon(Icons.Default.Menu, contentDescription = "Menu")
+                    Box {
+                        IconButton(onClick = { menuExpanded = true }) {
+                            Icon(Icons.Default.Menu, contentDescription = "Menu")
+                        }
+                        DropdownMenu(
+                            expanded = menuExpanded,
+                            onDismissRequest = { menuExpanded = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Import Transactions") },
+                                leadingIcon = {
+                                    Icon(Icons.Default.FileUpload, contentDescription = null)
+                                },
+                                onClick = {
+                                    menuExpanded = false
+                                    onNavigateToImport()
+                                }
+                            )
+                        }
                     }
                 },
                 actions = {

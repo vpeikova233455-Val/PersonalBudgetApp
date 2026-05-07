@@ -7,6 +7,7 @@ import com.budgetapp.data.local.entity.TransactionType
 import com.budgetapp.domain.model.Category
 import com.budgetapp.domain.model.Transaction
 import com.budgetapp.domain.repository.AuthRepository
+import com.budgetapp.domain.repository.CategoryRepository
 import com.budgetapp.domain.repository.TransactionRepository
 import com.budgetapp.domain.usecase.category.GetAllCategoriesUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -33,6 +34,7 @@ data class TransactionFormState(
 class TransactionViewModel @Inject constructor(
     private val transactionRepository: TransactionRepository,
     private val authRepository: AuthRepository,
+    private val categoryRepository: CategoryRepository,
     getAllCategoriesUseCase: GetAllCategoriesUseCase
 ) : ViewModel() {
 
@@ -85,6 +87,20 @@ class TransactionViewModel @Inject constructor(
 
     fun onCategorySelect(category: Category) {
         _formState.update { it.copy(selectedCategory = category, categoryError = null) }
+    }
+
+    fun createCategory(name: String, icon: String) {
+        viewModelScope.launch {
+            try {
+                val newId = categoryRepository.insertCategory(
+                    Category(id = 0, name = name, icon = icon, color = "#607D8B", isCustom = true)
+                )
+                val created = categoryRepository.getCategoryById(newId)
+                if (created != null) {
+                    _formState.update { it.copy(selectedCategory = created, categoryError = null) }
+                }
+            } catch (_: Exception) {}
+        }
     }
 
     fun onDateChange(date: Long) {

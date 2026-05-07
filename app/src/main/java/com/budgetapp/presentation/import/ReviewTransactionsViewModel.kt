@@ -130,7 +130,8 @@ class ReviewTransactionsViewModel @Inject constructor(
     }
 
     private fun formatAmount(amount: Double): String {
-        val formatter = NumberFormat.getCurrencyInstance(Locale.US)
+        val formatter = NumberFormat.getCurrencyInstance()
+        formatter.currency = java.util.Currency.getInstance("ILS")
         return formatter.format(amount)
     }
 

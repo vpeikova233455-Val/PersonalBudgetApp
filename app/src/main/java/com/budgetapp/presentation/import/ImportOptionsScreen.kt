@@ -1,23 +1,85 @@
 package com.budgetapp.presentation.import
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ImportOptionsScreen(
     onNavigateBack: () -> Unit,
-    onImportScreenshot: () -> Unit,
-    onImportFile: (String) -> Unit, // "CSV" or "EXCEL"
-    onNavigateToReview: () -> Unit
+    ocrViewModel: OcrImportViewModel,
+    onNavigateToReview: () -> Unit,
+    onImportFile: (String) -> Unit = {}
 ) {
+    val ocrState by ocrViewModel.state.collectAsState()
+    var showErrorDialog by remember { mutableStateOf(false) }
+    var errorMessage by remember { mutableStateOf("") }
+
+    val imagePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri ->
+        uri?.let { ocrViewModel.processScreenshot(it) }
+    }
+
+    LaunchedEffect(ocrState) {
+        when (val s = ocrState) {
+            is OcrImportState.Done -> {
+                ocrViewModel.resetState()
+                onNavigateToReview()
+            }
+            is OcrImportState.Error -> {
+                errorMessage = s.message
+                showErrorDialog = true
+            }
+            else -> {}
+        }
+    }
+
+    if (showErrorDialog) {
+        AlertDialog(
+            onDismissRequest = {
+                showErrorDialog = false
+                ocrViewModel.resetState()
+            },
+            title = { Text("Import Failed") },
+            text = { Text(errorMessage) },
+            confirmButton = {
+                TextButton(onClick = {
+                    showErrorDialog = false
+                    ocrViewModel.resetState()
+                }) { Text("OK") }
+            }
+        )
+    }
+
+    if (ocrState is OcrImportState.Processing) {
+        Dialog(
+            onDismissRequest = {},
+            properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false)
+        ) {
+            Card {
+                Column(
+                    modifier = Modifier.padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    CircularProgressIndicator()
+                    Text("Extracting transactions with AI…")
+                }
+            }
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -51,15 +113,13 @@ fun ImportOptionsScreen(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Screenshot option
             ImportOptionCard(
                 icon = Icons.Default.CameraAlt,
                 title = "Bank Statement Screenshot",
-                description = "Take or upload a photo of your bank statement. AI will extract all transactions.",
-                onClick = onImportScreenshot
+                description = "Upload a photo of your bank statement. AI will extract all transactions.",
+                onClick = { imagePickerLauncher.launch("image/*") }
             )
 
-            // Excel option
             ImportOptionCard(
                 icon = Icons.Default.Description,
                 title = "Excel File (.xlsx, .xls)",
@@ -67,7 +127,6 @@ fun ImportOptionsScreen(
                 onClick = { onImportFile("EXCEL") }
             )
 
-            // CSV option
             ImportOptionCard(
                 icon = Icons.Default.InsertDriveFile,
                 title = "CSV File",
@@ -77,7 +136,6 @@ fun ImportOptionsScreen(
 
             Spacer(modifier = Modifier.weight(1f))
 
-            // Info card
             Card(
                 colors = CardDefaults.cardColors(
                     containerColor = MaterialTheme.colorScheme.primaryContainer
@@ -101,7 +159,6 @@ fun ImportOptionsScreen(
                 }
             }
 
-            // View pending button
             OutlinedButton(
                 onClick = onNavigateToReview,
                 modifier = Modifier.fillMaxWidth()

@@ -45,7 +45,11 @@ fun AddTransactionScreen(
                 viewModel.onCategorySelect(it)
                 showCategoryPicker = false
             },
-            onDismiss = { showCategoryPicker = false }
+            onDismiss = { showCategoryPicker = false },
+            onCreateCategory = { name, icon ->
+                viewModel.createCategory(name, icon)
+                showCategoryPicker = false
+            }
         )
     }
 
@@ -125,7 +129,7 @@ fun AddTransactionScreen(
                 value = formState.amount,
                 onValueChange = viewModel::onAmountChange,
                 label = { Text("Amount") },
-                prefix = { Text("$") },
+                prefix = { Text("₪") },
                 isError = formState.amountError != null,
                 supportingText = formState.amountError?.let { { Text(it) } },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
