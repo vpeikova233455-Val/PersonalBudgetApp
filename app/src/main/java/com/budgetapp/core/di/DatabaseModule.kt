@@ -31,12 +31,15 @@ object DatabaseModule {
         )
             .fallbackToDestructiveMigration()
             .addCallback(object : RoomDatabase.Callback() {
-                override fun onCreate(db: SupportSQLiteDatabase) {
-                    super.onCreate(db)
+                override fun onOpen(db: SupportSQLiteDatabase) {
+                    super.onOpen(db)
                     CoroutineScope(Dispatchers.IO).launch {
-                        instance.categoryDao().insertCategories(
-                            com.budgetapp.data.repository.CategoryRepositoryImpl.defaultCategories()
-                        )
+                        val dao = instance.categoryDao()
+                        if (dao.getAllCategoriesSync().isEmpty()) {
+                            dao.insertCategories(
+                                com.budgetapp.data.repository.CategoryRepositoryImpl.defaultCategories()
+                            )
+                        }
                     }
                 }
             })
