@@ -76,161 +76,184 @@ fun DashboardScreen(
                 Icon(Icons.Default.Add, contentDescription = "Add Transaction")
             }
         },
-        modifier = Modifier.nestedScroll(pullToRefreshState.nestedScrollConnection),
         containerColor = MaterialTheme.colorScheme.background
     ) { padding ->
-        Box(modifier = Modifier.fillMaxSize()) {
-            when (val state = uiState) {
-                is DashboardUiState.Loading -> {
-                    Box(
-                        modifier = Modifier.fillMaxSize().padding(padding),
-                        contentAlignment = Alignment.Center
-                    ) { CircularProgressIndicator(color = BrandBlue) }
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+        ) {
+            // Fixed header — lives outside the PTR Box so the PTR indicator
+            // (which animates with graphicsLayer and keeps its layout position)
+            // can never block these buttons.
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        text = "Good day!",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = "My Wallet",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold
+                    )
                 }
-
-                is DashboardUiState.Error -> {
-                    Box(
-                        modifier = Modifier.fillMaxSize().padding(padding),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(state.message, color = MaterialTheme.colorScheme.error)
-                            Spacer(modifier = Modifier.height(16.dp))
-                            Button(onClick = viewModel::refresh) { Text("Retry") }
-                        }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    IconButton(onClick = onNavigateToImport) {
+                        Icon(
+                            Icons.Default.FileUpload,
+                            contentDescription = "Import",
+                            tint = MaterialTheme.colorScheme.onSurface
+                        )
                     }
-                }
-
-                is DashboardUiState.Success -> {
-                    val data = state.data
-                    val spendingRatio = if (data.totalIncome > 0)
-                        min(data.totalExpenses / data.totalIncome, 1.0).toFloat()
-                    else 0f
-
-                    LazyColumn(
-                        modifier = Modifier.fillMaxSize().padding(padding),
-                        contentPadding = PaddingValues(bottom = 16.dp)
-                    ) {
-                        // Header row
-                        item {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 20.dp, vertical = 16.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column {
-                                    Text(
-                                        text = "Good day!",
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                    Text(
-                                        text = "My Wallet",
-                                        style = MaterialTheme.typography.titleLarge,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                }
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    IconButton(onClick = onNavigateToImport) {
-                                        Icon(
-                                            Icons.Default.FileUpload,
-                                            contentDescription = "Import",
-                                            tint = MaterialTheme.colorScheme.onSurface
-                                        )
-                                    }
-                                    IconButton(onClick = onNavigateToSettings) {
-                                        Icon(
-                                            Icons.Default.Notifications,
-                                            contentDescription = "Settings",
-                                            tint = MaterialTheme.colorScheme.onSurface
-                                        )
-                                    }
-                                }
-                            }
-                        }
-
-                        // Balance card
-                        item {
-                            BalanceCard(
-                                balance = data.balance,
-                                income = data.totalIncome,
-                                expenses = data.totalExpenses,
-                                monthLabel = viewModel.selectedMonthLabel(),
-                                onPreviousMonth = viewModel::previousMonth,
-                                onNextMonth = viewModel::nextMonth,
-                                modifier = Modifier.padding(horizontal = 20.dp)
-                            )
-                        }
-
-                        // Spending progress card
-                        if (data.totalIncome > 0 || data.totalExpenses > 0) {
-                            item {
-                                Spacer(modifier = Modifier.height(16.dp))
-                                SpendingProgressCard(
-                                    totalExpenses = data.totalExpenses,
-                                    totalIncome = data.totalIncome,
-                                    spendingRatio = spendingRatio,
-                                    modifier = Modifier.padding(horizontal = 20.dp)
-                                )
-                            }
-                        }
-
-                        // Recent transactions header
-                        item {
-                            Spacer(modifier = Modifier.height(24.dp))
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 20.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = "Recent Activity",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                            Spacer(modifier = Modifier.height(8.dp))
-                        }
-
-                        if (data.recentTransactions.isEmpty()) {
-                            item {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 20.dp)
-                                        .clip(RoundedCornerShape(16.dp))
-                                        .background(MaterialTheme.colorScheme.surface)
-                                        .padding(32.dp),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text(
-                                        text = "No transactions yet.\nTap + to add your first!",
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-                        } else {
-                            items(data.recentTransactions) { transaction ->
-                                StyledTransactionItem(
-                                    transaction = transaction,
-                                    onClick = { onTransactionClick(transaction.id) },
-                                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)
-                                )
-                            }
-                        }
+                    IconButton(onClick = onNavigateToSettings) {
+                        Icon(
+                            Icons.Default.Notifications,
+                            contentDescription = "Settings",
+                            tint = MaterialTheme.colorScheme.onSurface
+                        )
                     }
                 }
             }
 
-            PullToRefreshContainer(
-                state = pullToRefreshState,
-                modifier = Modifier.align(Alignment.TopCenter)
-            )
+            // Scrollable area — nestedScroll scoped only to this Box
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .nestedScroll(pullToRefreshState.nestedScrollConnection)
+            ) {
+                when (val state = uiState) {
+                    is DashboardUiState.Loading -> {
+                        Box(
+                            modifier = Modifier.fillMaxSize(),
+                            contentAlignment = Alignment.Center
+                        ) { CircularProgressIndicator(color = BrandBlue) }
+                    }
+
+                    is DashboardUiState.Error -> {
+                        Box(
+                            modifier = Modifier.fillMaxSize(),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(state.message, color = MaterialTheme.colorScheme.error)
+                                Spacer(modifier = Modifier.height(16.dp))
+                                Button(onClick = viewModel::refresh) { Text("Retry") }
+                            }
+                        }
+                    }
+
+                    is DashboardUiState.Success -> {
+                        val data = state.data
+                        val spendingRatio = if (data.totalIncome > 0)
+                            min(data.totalExpenses / data.totalIncome, 1.0).toFloat()
+                        else 0f
+
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(bottom = 16.dp)
+                        ) {
+                            // Balance card
+                            item {
+                                BalanceCard(
+                                    balance = data.balance,
+                                    income = data.totalIncome,
+                                    expenses = data.totalExpenses,
+                                    monthLabel = viewModel.selectedMonthLabel(),
+                                    onPreviousMonth = viewModel::previousMonth,
+                                    onNextMonth = viewModel::nextMonth,
+                                    modifier = Modifier.padding(horizontal = 20.dp)
+                                )
+                            }
+
+                            // Spending progress card
+                            if (data.totalIncome > 0 || data.totalExpenses > 0) {
+                                item {
+                                    Spacer(modifier = Modifier.height(16.dp))
+                                    SpendingProgressCard(
+                                        totalExpenses = data.totalExpenses,
+                                        totalIncome = data.totalIncome,
+                                        spendingRatio = spendingRatio,
+                                        modifier = Modifier.padding(horizontal = 20.dp)
+                                    )
+                                }
+                            }
+
+                            // Recent transactions header
+                            item {
+                                Spacer(modifier = Modifier.height(24.dp))
+                                Text(
+                                    text = "Recent Activity",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 20.dp)
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                            }
+
+                            if (data.recentTransactions.isEmpty()) {
+                                item {
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 20.dp)
+                                            .clip(RoundedCornerShape(16.dp))
+                                            .background(MaterialTheme.colorScheme.surface)
+                                            .padding(24.dp),
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                                    ) {
+                                        Text(
+                                            text = "No transactions yet",
+                                            style = MaterialTheme.typography.titleSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            OutlinedButton(
+                                                onClick = onNavigateToImport,
+                                                modifier = Modifier.weight(1f)
+                                            ) {
+                                                Icon(Icons.Default.FileUpload, contentDescription = null, modifier = Modifier.size(16.dp))
+                                                Spacer(Modifier.width(4.dp))
+                                                Text("Import")
+                                            }
+                                            Button(
+                                                onClick = onNavigateToAddTransaction,
+                                                modifier = Modifier.weight(1f),
+                                                colors = ButtonDefaults.buttonColors(containerColor = BrandBlue)
+                                            ) {
+                                                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                                                Spacer(Modifier.width(4.dp))
+                                                Text("Add")
+                                            }
+                                        }
+                                    }
+                                }
+                            } else {
+                                items(data.recentTransactions) { transaction ->
+                                    StyledTransactionItem(
+                                        transaction = transaction,
+                                        onClick = { onTransactionClick(transaction.id) },
+                                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                PullToRefreshContainer(
+                    state = pullToRefreshState,
+                    modifier = Modifier.align(Alignment.TopCenter)
+                )
+            }
         }
     }
 }
