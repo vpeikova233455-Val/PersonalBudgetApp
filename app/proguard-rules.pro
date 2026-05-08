@@ -1,8 +1,12 @@
 # Add project specific ProGuard rules here.
 
+# Disable obfuscation — Hilt uses getDeclaredConstructor() with exact class names
+# at runtime; any renaming breaks ViewModel injection even with -keep rules.
+# Shrinking (dead code removal) is still enabled.
+-dontobfuscate
+
 # Keep source file names and line numbers for debugging
 -keepattributes SourceFile,LineNumberTable
--renamesourcefileattribute SourceFile
 
 # Keep generic signature of Call, Response (R8 full mode)
 -keepattributes Signature
