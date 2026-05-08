@@ -54,9 +54,10 @@
 -keepclassmembers class kotlinx.coroutines.flow.** { *; }
 -keep class kotlinx.coroutines.flow.** { *; }
 
-# Keep data classes for Firestore
--keep class com.budgetapp.data.** { *; }
--keep class com.budgetapp.domain.model.** { *; }
+# Keep all app classes — R8 renamed domain interfaces (AuthRepository,
+# TransactionRepository, etc.) and presentation ViewModels, causing
+# Hilt's getDeclaredConstructor() to fail with NoSuchMethodException.
+-keep class com.budgetapp.** { *; }
 
 # Keep enums
 -keepclassmembers enum * {
