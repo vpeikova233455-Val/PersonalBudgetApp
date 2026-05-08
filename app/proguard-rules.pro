@@ -13,6 +13,9 @@
 # Keep exceptions
 -keepattributes Exceptions
 
+# Kotlin metadata — required for Hilt constructor injection and coroutines
+-keepattributes kotlin.Metadata
+
 # Room
 -keep class * extends androidx.room.RoomDatabase
 -keep @androidx.room.Entity class *
@@ -34,11 +37,22 @@
 # Hilt
 -keep class dagger.hilt.** { *; }
 -keep class javax.inject.** { *; }
+-keep class com.budgetapp.hilt_aggregated_deps.** { *; }
 
 # Keep all ViewModels by their real names so R8 can't rename two to the same
 # obfuscated name (causes "Multiple entries with same key" in HiltViewModelFactory).
 -keep class * extends androidx.lifecycle.ViewModel { *; }
 -keep @dagger.hilt.android.lifecycle.HiltViewModel class * { *; }
+
+# Keep Hilt-generated component and factory classes in app package
+-keep class com.budgetapp.**_Hilt* { *; }
+-keep class com.budgetapp.**_Factory { *; }
+-keep class com.budgetapp.**_MembersInjector { *; }
+-keep class com.budgetapp.Hilt_* { *; }
+
+# Kotlin coroutines StateFlow / SharedFlow internal state classes
+-keepclassmembers class kotlinx.coroutines.flow.** { *; }
+-keep class kotlinx.coroutines.flow.** { *; }
 
 # Keep data classes for Firestore
 -keep class com.budgetapp.data.** { *; }

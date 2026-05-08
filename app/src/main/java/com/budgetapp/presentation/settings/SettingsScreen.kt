@@ -1,7 +1,12 @@
 package com.budgetapp.presentation.settings
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -14,6 +19,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.budgetapp.data.export.ExportFormat
 import com.budgetapp.data.export.ExportRange
+import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -28,6 +34,7 @@ fun SettingsScreen(
     val context = LocalContext.current
 
     var showExportDialog by remember { mutableStateOf(false) }
+    var crashLog by remember { mutableStateOf<String?>(null) }
 
     // Launch share sheet whenever the ViewModel emits a share intent
     LaunchedEffect(Unit) {
@@ -235,9 +242,46 @@ fun SettingsScreen(
                             }
                         }
                     )
+
+                    val crashFile = File(context.filesDir, "last_crash.txt")
+                    if (crashFile.exists()) {
+                        HorizontalDivider()
+                        SettingsRow(
+                            icon = Icons.Default.BugReport,
+                            label = "View Last Crash Log",
+                            onClick = { crashLog = crashFile.readText() }
+                        )
+                    }
                 }
             }
         }
+    }
+
+    crashLog?.let { log ->
+        AlertDialog(
+            onDismissRequest = { crashLog = null },
+            title = { Text("Last Crash Log") },
+            text = {
+                val scrollState = androidx.compose.foundation.rememberScrollState()
+                Text(
+                    text = log.take(3000),
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier
+                        .heightIn(max = 300.dp)
+                        .verticalScroll(scrollState)
+                )
+            },
+            confirmButton = {
+                Button(onClick = {
+                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    clipboard.setPrimaryClip(ClipData.newPlainText("crash_log", log))
+                    crashLog = null
+                }) { Text("Copy to Clipboard") }
+            },
+            dismissButton = {
+                TextButton(onClick = { crashLog = null }) { Text("Close") }
+            }
+        )
     }
 }
 
