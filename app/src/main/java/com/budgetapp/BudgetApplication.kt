@@ -5,6 +5,7 @@ import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import com.budgetapp.worker.SyncWorker
+import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import dagger.hilt.android.HiltAndroidApp
 import java.io.PrintWriter
 import java.io.StringWriter
@@ -16,6 +17,7 @@ class BudgetApplication : Application() {
     override fun onCreate() {
         setupCrashHandler()
         super.onCreate()
+        PDFBoxResourceLoader.init(applicationContext)
         setupBackgroundSync()
     }
 

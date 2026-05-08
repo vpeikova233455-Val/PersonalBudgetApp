@@ -22,8 +22,8 @@ android {
         applicationId = "com.budgetapp"
         minSdk = 26
         targetSdk = 34
-        versionCode = 22
-        versionName = "2.1.7"
+        versionCode = 23
+        versionName = "2.1.8"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -134,6 +134,7 @@ dependencies {
     // File Parsing
     implementation("org.apache.poi:poi-ooxml:5.2.5")
     implementation("com.opencsv:opencsv:5.8")
+    implementation("com.tom-roush:pdfbox-android:2.0.27.0")
 
     // Charts
     implementation("co.yml:ycharts:2.1.0")

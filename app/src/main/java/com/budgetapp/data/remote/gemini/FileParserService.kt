@@ -3,6 +3,8 @@ package com.budgetapp.data.remote.gemini
 import android.content.Context
 import android.net.Uri
 import com.opencsv.CSVReader
+import com.tom_roush.pdfbox.pdmodel.PDDocument
+import com.tom_roush.pdfbox.text.PDFTextStripper
 import dagger.hilt.android.qualifiers.ApplicationContext
 import org.apache.poi.ss.usermodel.Cell
 import org.apache.poi.ss.usermodel.CellType
@@ -24,7 +26,7 @@ class FileParserService @Inject constructor(
             val path = uri.path?.lowercase() ?: ""
             when {
                 mimeType == "application/pdf" || path.endsWith(".pdf") ->
-                    FileParseResult.NeedsOcr
+                    parsePdfFile(uri)
 
                 mimeType?.contains("spreadsheet") == true ||
                 mimeType?.contains("excel") == true ||
@@ -45,6 +47,84 @@ class FileParserService @Inject constructor(
         val excelResult = parseExcelFile(uri)
         if (excelResult is FileParseResult.Success) return excelResult
         return parseCsvFile(uri)
+    }
+
+    // ── PDF ───────────────────────────────────────────────────────────────────
+
+    private fun parsePdfFile(uri: Uri): FileParseResult {
+        return try {
+            val inputStream = context.contentResolver.openInputStream(uri)
+                ?: return FileParseResult.Error("Could not open PDF")
+            val doc = PDDocument.load(inputStream)
+            val stripper = PDFTextStripper()
+            val text = stripper.getText(doc)
+            doc.close()
+            inputStream.close()
+
+            if (text.isBlank()) return FileParseResult.NeedsOcr
+
+            val transactions = extractTransactionsFromText(text)
+            if (transactions.isNotEmpty())
+                FileParseResult.Success(transactions)
+            else
+                FileParseResult.NeedsOcr
+        } catch (_: Exception) {
+            FileParseResult.NeedsOcr
+        }
+    }
+
+    private fun extractTransactionsFromText(text: String): List<ParsedTransaction> {
+        val transactions = mutableListOf<ParsedTransaction>()
+        val lines = text.lines().map { it.trim() }.filter { it.isNotBlank() }
+
+        // DATE regex: matches dd/mm/yyyy, dd.mm.yyyy, dd-mm-yyyy and yyyy-mm-dd variants
+        val dateRegex = Regex(
+            """(?:^|\s)(\d{1,2}[./\-]\d{1,2}[./\-]\d{2,4}|\d{4}[./\-]\d{2}[./\-]\d{2})"""
+        )
+        // AMOUNT regex: number at or near end of line (with optional sign, commas, currency suffix)
+        val amountRegex = Regex("""([-+]?\d[\d,]*(?:\.\d+)?)\s*(?:[₪$€£₽]|ILS|NIS|USD|EUR|RUB)?\s*$""")
+
+        for (line in lines) {
+            if (isSummaryRow(line)) continue
+
+            val amountMatch = amountRegex.find(line) ?: continue
+            val amount = parseAmount(amountMatch.groupValues[1]) ?: continue
+            if (amount == 0.0) continue
+
+            val beforeAmount = line.substring(0, amountMatch.range.first).trim()
+
+            val dateMatch = dateRegex.find(beforeAmount)
+            val date: String?
+            val description: String
+            if (dateMatch != null) {
+                date = parseDate(dateMatch.groupValues[1])
+                description = beforeAmount.removeRange(dateMatch.range).trim()
+            } else {
+                date = null
+                description = beforeAmount
+            }
+
+            if (description.isBlank()) continue
+            if (isSummaryRow(description)) continue
+
+            val rawSign = amountMatch.groupValues[1]
+            val type = if (rawSign.startsWith("-") || line.contains("(")) {
+                TransactionType.EXPENSE
+            } else {
+                TransactionType.INCOME
+            }
+
+            transactions.add(
+                ParsedTransaction(
+                    description = description,
+                    amount = amount,
+                    date = date,
+                    type = type,
+                    rawData = line
+                )
+            )
+        }
+        return transactions
     }
 
     // ── Excel ──────────────────────────────────────────────────────────────────
