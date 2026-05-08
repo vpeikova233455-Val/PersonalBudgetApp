@@ -93,36 +93,26 @@ class FileParserService @Inject constructor(
     }
 
     private fun extractTransactionsFromText(text: String): List<ParsedTransaction> {
-        val transactions = mutableListOf<ParsedTransaction>()
         val lines = text.lines().map { it.trim() }.filter { it.isNotBlank() }
 
-        // Find header row — contains date keyword AND at least one amount/debit/credit keyword
+        // Detect header row → tells us whether debit or credit column comes first
         val headerIdx = lines.indexOfFirst { line ->
             val l = line.lowercase()
             DATE_KEYWORDS.any { l.contains(it) } &&
             (AMOUNT_KEYWORDS + DEBIT_KEYWORDS + CREDIT_KEYWORDS).any { l.contains(it) }
         }
-
-        val layout: PdfColumnLayout? = if (headerIdx >= 0) detectLayout(lines[headerIdx]) else null
+        val layout = if (headerIdx >= 0) detectLayout(lines[headerIdx]) else null
         val startIdx = if (headerIdx >= 0) headerIdx + 1 else 0
 
-        for (i in startIdx until lines.size) {
-            val line = lines[i]
-            if (isSummaryRow(line)) continue
-            if (headerIdx >= 0 && lines[headerIdx].lowercase().let { h ->
-                DATE_KEYWORDS.any { h.contains(it) }
-            } && line.lowercase().let { l -> DATE_KEYWORDS.any { l.contains(it) } }) continue
-
-            val tx = if (layout != null) parseColumnLine(line, layout) else parseFreeformLine(line)
-            if (tx != null) transactions.add(tx)
-        }
-        return transactions
+        return lines.drop(startIdx)
+            .filter { !isSummaryRow(it) }
+            .mapNotNull { parsePdfLine(it, layout) }
     }
 
     private data class PdfColumnLayout(
         val hasDebit: Boolean,
         val hasCredit: Boolean,
-        val debitBeforeCredit: Boolean
+        val debitBeforeCredit: Boolean   // true when debit keyword appears left of credit in header
     )
 
     private fun detectLayout(header: String): PdfColumnLayout {
@@ -134,76 +124,90 @@ class FileParserService @Inject constructor(
         return PdfColumnLayout(hasDebit, hasCredit, debitPos < creditPos)
     }
 
-    /** Parse a line from a structured table (header was detected). */
-    private fun parseColumnLine(line: String, layout: PdfColumnLayout): ParsedTransaction? {
-        // Split on 2+ spaces or tabs — these are the column boundaries
-        val cols = line.split(Regex("\\t| {2,}")).map { it.trim() }.filter { it.isNotBlank() }
-        if (cols.size < 2) return null
+    /**
+     * Core line parser — works for any column order / separator style.
+     *
+     * Strategy:
+     *  1. Require a date anywhere on the line.
+     *  2. Collect all numeric tokens (ignoring account/card numbers: 6+ digits, no decimal).
+     *  3. The last number on a line is usually the running balance — drop it when ≥ 3 numbers.
+     *  4. When two numbers remain: debit/credit columns — one is 0 (or near-zero).
+     *  5. The non-zero one is the transaction amount; column layout says which is which.
+     *  6. Description = everything that isn't the date and isn't a recognised number token.
+     */
+    private fun parsePdfLine(line: String, layout: PdfColumnLayout?): ParsedTransaction? {
+        // 1. Find date
+        val dateMatch = PDF_DATE_RE.find(line) ?: return null
+        val date = parseDate(dateMatch.value)
 
-        var date: String? = null
-        var description: String? = null
-        val numbers = mutableListOf<Double>()
+        // 2. Find all currency-style numbers (allow commas, up to 2 decimal places)
+        //    Exclude pure integers ≥ 6 digits (account/card/reference numbers).
+        data class NumToken(val value: Double, val start: Int, val raw: String)
+        val numTokens = PDF_NUM_FINDER.findAll(line)
+            .mapNotNull { m ->
+                val raw = m.value
+                // Skip pure integers that look like account/reference numbers (≥6 digits, no decimal/comma)
+                if (raw.length >= 6 && !raw.contains('.') && !raw.contains(',')) return@mapNotNull null
+                val v = parseAmount(raw) ?: return@mapNotNull null
+                if (v <= 0) return@mapNotNull null
+                NumToken(v, m.range.first, raw)
+            }.toList()
 
-        for (col in cols) {
-            when {
-                date == null && PDF_DATE_RE.containsMatchIn(col) -> {
-                    date = parseDate(PDF_DATE_RE.find(col)!!.value)
-                    val rest = PDF_DATE_RE.replace(col, "").trim()
-                    if (rest.isNotBlank() && !rest.matches(PDF_NUM_RE)) description = rest
-                }
-                col.matches(PDF_NUM_RE) -> parseAmount(col)?.takeIf { it > 0 }?.let { numbers.add(it) }
-                description == null && !isSummaryRow(col) -> description = col
-            }
-        }
+        if (numTokens.isEmpty()) return null
 
-        if (description.isNullOrBlank() || numbers.isEmpty()) return null
-        if (isSummaryRow(description!!)) return null
+        // 3. Drop last token when it's likely a running balance (≥ 3 numbers found)
+        val txTokens = if (numTokens.size >= 3) numTokens.dropLast(1) else numTokens
 
-        // Last number is usually the running balance — drop it when ≥3 numbers present
-        val txNumbers = if (numbers.size >= 3) numbers.dropLast(1) else numbers
-
+        // 4. Determine amount + type
         val amount: Double
         val type: TransactionType
 
-        if (layout.hasDebit && layout.hasCredit && txNumbers.size >= 2) {
-            // Two amounts: whichever is non-zero in its column wins
-            val first  = txNumbers[0]
-            val second = txNumbers[1]
+        if (layout != null && layout.hasDebit && layout.hasCredit && txTokens.size >= 2) {
+            val a = txTokens[0].value
+            val b = txTokens[1].value
             when {
-                first > 0 && second == 0.0 -> { amount = first;  type = if (layout.debitBeforeCredit) TransactionType.EXPENSE else TransactionType.INCOME }
-                second > 0 && first == 0.0 -> { amount = second; type = if (layout.debitBeforeCredit) TransactionType.INCOME  else TransactionType.EXPENSE }
-                else -> { amount = first; type = TransactionType.EXPENSE }
+                a > 0 && b < 0.01 -> { amount = a; type = if (layout.debitBeforeCredit) TransactionType.EXPENSE else TransactionType.INCOME }
+                b > 0 && a < 0.01 -> { amount = b; type = if (layout.debitBeforeCredit) TransactionType.INCOME  else TransactionType.EXPENSE }
+                else              -> { amount = maxOf(a, b); type = TransactionType.EXPENSE }
+            }
+        } else if (txTokens.size == 2) {
+            // No explicit layout — guess: the smaller value is the transaction, larger is balance
+            val smaller = txTokens.minByOrNull { it.value }!!
+            val debitKw = layout?.hasDebit == true
+            val creditKw = layout?.hasCredit == true
+            amount = smaller.value
+            type = when {
+                debitKw && !creditKw  -> TransactionType.EXPENSE
+                creditKw && !debitKw  -> TransactionType.INCOME
+                else                  -> TransactionType.EXPENSE
             }
         } else {
-            amount = txNumbers.first()
+            amount = txTokens.first().value
             type = when {
-                layout.hasDebit && !layout.hasCredit  -> TransactionType.EXPENSE
-                layout.hasCredit && !layout.hasDebit  -> TransactionType.INCOME
+                layout?.hasDebit == true && layout.hasCredit != true -> TransactionType.EXPENSE
+                layout?.hasCredit == true && layout.hasDebit != true -> TransactionType.INCOME
                 else -> TransactionType.EXPENSE
             }
         }
 
         if (amount == 0.0) return null
-        return ParsedTransaction(description = description!!, amount = amount, date = date, type = type, rawData = line)
-    }
 
-    /** Parse a line with no detected header (freeform). */
-    private fun parseFreeformLine(line: String): ParsedTransaction? {
-        val amountMatch = PDF_TRAILING_AMOUNT_RE.find(line) ?: return null
-        val amount = parseAmount(amountMatch.groupValues[1]) ?: return null
-        if (amount == 0.0) return null
+        // 5. Build description: strip date and all number tokens, collapse whitespace
+        var desc = line
+        // Remove date
+        desc = desc.removeRange(dateMatch.range)
+        // Remove all number tokens (iterate in reverse to preserve indices)
+        numTokens.sortedByDescending { it.start }.forEach { t ->
+            val end = t.start + t.raw.length
+            if (end <= desc.length) desc = desc.removeRange(t.start, end)
+        }
+        // Strip currency symbols and clean whitespace
+        desc = desc.replace(Regex("[₪\$€£₽]|ILS|NIS|USD|EUR|RUB"), "")
+            .replace(Regex("\\s{2,}"), " ").trim()
 
-        val beforeAmount = line.substring(0, amountMatch.range.first).trim()
-        val dateMatch = PDF_DATE_RE.find(beforeAmount)
-        val date = dateMatch?.let { parseDate(it.value) }
-        val description = if (dateMatch != null)
-            beforeAmount.removeRange(dateMatch.range).trim()
-        else beforeAmount
+        if (desc.isBlank() || isSummaryRow(desc)) return null
 
-        if (description.isBlank() || isSummaryRow(description)) return null
-
-        val type = if (amountMatch.groupValues[1].startsWith("-")) TransactionType.EXPENSE else TransactionType.INCOME
-        return ParsedTransaction(description = description, amount = amount, date = date, type = type, rawData = line)
+        return ParsedTransaction(description = desc, amount = amount, date = date, type = type, rawData = line)
     }
 
     // ── Excel ──────────────────────────────────────────────────────────────────
@@ -489,6 +493,8 @@ class FileParserService @Inject constructor(
         val PDF_DATE_RE = Regex("""\d{1,2}[./\-]\d{1,2}[./\-]\d{2,4}|\d{4}[./\-]\d{2}[./\-]\d{2}""")
         val PDF_NUM_RE  = Regex("""^[-+]?[\d,]+(?:\.\d{1,2})?$""")
         val PDF_TRAILING_AMOUNT_RE = Regex("""([-+]?\d[\d,]*(?:\.\d+)?)\s*(?:[₪${'$'}€£₽]|ILS|NIS)?\s*$""")
+        // Finds individual numeric tokens, including comma-thousands and decimals
+        val PDF_NUM_FINDER = Regex("""[\d,]+(?:\.\d{1,2})?""")
 
         // English + Hebrew + Russian column header keywords
         private val DATE_KEYWORDS = listOf(
