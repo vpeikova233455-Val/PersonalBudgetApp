@@ -22,8 +22,8 @@ android {
         applicationId = "com.budgetapp"
         minSdk = 26
         targetSdk = 34
-        versionCode = 23
-        versionName = "2.1.8"
+        versionCode = 24
+        versionName = "2.1.9"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -38,6 +38,7 @@ android {
         buildConfigField("String", "GITHUB_TOKEN", "\"${localProps.getProperty("github.token", "")}\"")
         buildConfigField("String", "GITHUB_OWNER", "\"${localProps.getProperty("github.owner", "")}\"")
         buildConfigField("String", "GITHUB_REPO",  "\"${localProps.getProperty("github.repo",  "")}\"")
+        buildConfigField("String", "GEMINI_API_KEY", "\"${localProps.getProperty("gemini.api.key", "")}\"")
     }
 
     signingConfigs {

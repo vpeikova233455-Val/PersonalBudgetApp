@@ -53,7 +53,11 @@ class FileImportViewModel @Inject constructor(
                         _state.value = FileImportState.OcrInProgress
                         val transactions = withContext(Dispatchers.IO) { ocrPdfPages(uri) }
                         if (transactions.isEmpty()) {
-                            _state.value = FileImportState.Error("Could not extract transactions from this PDF. Try uploading a screenshot instead.")
+                            _state.value = FileImportState.Error(
+                                "Could not read transactions from this PDF.\n\n" +
+                                "• If it's a scanned PDF, AI processing is required — make sure a Gemini API key is configured in local.properties (gemini.api.key=...).\n" +
+                                "• Otherwise, try exporting the statement as Excel or CSV from your bank's website."
+                            )
                         } else {
                             showPreview(transactions)
                         }
@@ -61,7 +65,11 @@ class FileImportViewModel @Inject constructor(
                     is FileParseResult.Error -> _state.value = FileImportState.Error(result.message)
                 }
             } catch (e: Exception) {
-                _state.value = FileImportState.Error(e.message ?: "Unknown error")
+                val msg = e.message ?: "Unknown error"
+                val friendly = if (msg.contains("API key", ignoreCase = true))
+                    "AI processing failed — Gemini API key is missing or invalid.\n\nAdd gemini.api.key=YOUR_KEY to local.properties and rebuild."
+                else msg
+                _state.value = FileImportState.Error(friendly)
             }
         }
     }

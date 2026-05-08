@@ -56,19 +56,38 @@ class FileParserService @Inject constructor(
             val inputStream = context.contentResolver.openInputStream(uri)
                 ?: return FileParseResult.Error("Could not open PDF")
             val doc = PDDocument.load(inputStream)
-            val stripper = PDFTextStripper()
-            val text = stripper.getText(doc)
+
+            // Try sorted extraction first (better column alignment for LTR/mixed content)
+            val sortedText = PDFTextStripper().apply {
+                sortByPosition = true
+                addMoreFormatting = true
+            }.getText(doc)
+
+            // Also try natural order (can be better for RTL/Hebrew PDFs)
+            val naturalText = PDFTextStripper().apply {
+                sortByPosition = false
+            }.getText(doc)
+
             doc.close()
             inputStream.close()
 
-            if (text.isBlank()) return FileParseResult.NeedsOcr
+            val sortedTx = if (sortedText.isNotBlank()) extractTransactionsFromText(sortedText) else emptyList()
+            val naturalTx = if (naturalText.isNotBlank()) extractTransactionsFromText(naturalText) else emptyList()
 
-            val transactions = extractTransactionsFromText(text)
-            if (transactions.isNotEmpty())
-                FileParseResult.Success(transactions)
-            else
-                FileParseResult.NeedsOcr
-        } catch (_: Exception) {
+            val transactions = if (sortedTx.size >= naturalTx.size) sortedTx else naturalTx
+
+            when {
+                transactions.isNotEmpty() -> FileParseResult.Success(transactions)
+                sortedText.isNotBlank() ->
+                    // Return raw text so the error dialog shows it for debugging
+                    FileParseResult.Error(
+                        "Could not parse transactions from this PDF.\n\n" +
+                        "Raw text (first 600 chars — paste this to get help tuning the parser):\n\n" +
+                        sortedText.take(600)
+                    )
+                else -> FileParseResult.NeedsOcr
+            }
+        } catch (e: Exception) {
             FileParseResult.NeedsOcr
         }
     }
@@ -77,54 +96,114 @@ class FileParserService @Inject constructor(
         val transactions = mutableListOf<ParsedTransaction>()
         val lines = text.lines().map { it.trim() }.filter { it.isNotBlank() }
 
-        // DATE regex: matches dd/mm/yyyy, dd.mm.yyyy, dd-mm-yyyy and yyyy-mm-dd variants
-        val dateRegex = Regex(
-            """(?:^|\s)(\d{1,2}[./\-]\d{1,2}[./\-]\d{2,4}|\d{4}[./\-]\d{2}[./\-]\d{2})"""
-        )
-        // AMOUNT regex: number at or near end of line (with optional sign, commas, currency suffix)
-        val amountRegex = Regex("""([-+]?\d[\d,]*(?:\.\d+)?)\s*(?:[₪$€£₽]|ILS|NIS|USD|EUR|RUB)?\s*$""")
+        // Find header row — contains date keyword AND at least one amount/debit/credit keyword
+        val headerIdx = lines.indexOfFirst { line ->
+            val l = line.lowercase()
+            DATE_KEYWORDS.any { l.contains(it) } &&
+            (AMOUNT_KEYWORDS + DEBIT_KEYWORDS + CREDIT_KEYWORDS).any { l.contains(it) }
+        }
 
-        for (line in lines) {
+        val layout: PdfColumnLayout? = if (headerIdx >= 0) detectLayout(lines[headerIdx]) else null
+        val startIdx = if (headerIdx >= 0) headerIdx + 1 else 0
+
+        for (i in startIdx until lines.size) {
+            val line = lines[i]
             if (isSummaryRow(line)) continue
+            if (headerIdx >= 0 && lines[headerIdx].lowercase().let { h ->
+                DATE_KEYWORDS.any { h.contains(it) }
+            } && line.lowercase().let { l -> DATE_KEYWORDS.any { l.contains(it) } }) continue
 
-            val amountMatch = amountRegex.find(line) ?: continue
-            val amount = parseAmount(amountMatch.groupValues[1]) ?: continue
-            if (amount == 0.0) continue
-
-            val beforeAmount = line.substring(0, amountMatch.range.first).trim()
-
-            val dateMatch = dateRegex.find(beforeAmount)
-            val date: String?
-            val description: String
-            if (dateMatch != null) {
-                date = parseDate(dateMatch.groupValues[1])
-                description = beforeAmount.removeRange(dateMatch.range).trim()
-            } else {
-                date = null
-                description = beforeAmount
-            }
-
-            if (description.isBlank()) continue
-            if (isSummaryRow(description)) continue
-
-            val rawSign = amountMatch.groupValues[1]
-            val type = if (rawSign.startsWith("-") || line.contains("(")) {
-                TransactionType.EXPENSE
-            } else {
-                TransactionType.INCOME
-            }
-
-            transactions.add(
-                ParsedTransaction(
-                    description = description,
-                    amount = amount,
-                    date = date,
-                    type = type,
-                    rawData = line
-                )
-            )
+            val tx = if (layout != null) parseColumnLine(line, layout) else parseFreeformLine(line)
+            if (tx != null) transactions.add(tx)
         }
         return transactions
+    }
+
+    private data class PdfColumnLayout(
+        val hasDebit: Boolean,
+        val hasCredit: Boolean,
+        val debitBeforeCredit: Boolean
+    )
+
+    private fun detectLayout(header: String): PdfColumnLayout {
+        val l = header.lowercase()
+        val hasDebit  = DEBIT_KEYWORDS.any  { l.contains(it) }
+        val hasCredit = CREDIT_KEYWORDS.any { l.contains(it) }
+        val debitPos  = DEBIT_KEYWORDS.mapNotNull  { if (l.contains(it)) l.indexOf(it) else null }.minOrNull() ?: Int.MAX_VALUE
+        val creditPos = CREDIT_KEYWORDS.mapNotNull { if (l.contains(it)) l.indexOf(it) else null }.minOrNull() ?: Int.MAX_VALUE
+        return PdfColumnLayout(hasDebit, hasCredit, debitPos < creditPos)
+    }
+
+    /** Parse a line from a structured table (header was detected). */
+    private fun parseColumnLine(line: String, layout: PdfColumnLayout): ParsedTransaction? {
+        // Split on 2+ spaces or tabs — these are the column boundaries
+        val cols = line.split(Regex("\\t| {2,}")).map { it.trim() }.filter { it.isNotBlank() }
+        if (cols.size < 2) return null
+
+        var date: String? = null
+        var description: String? = null
+        val numbers = mutableListOf<Double>()
+
+        for (col in cols) {
+            when {
+                date == null && PDF_DATE_RE.containsMatchIn(col) -> {
+                    date = parseDate(PDF_DATE_RE.find(col)!!.value)
+                    val rest = PDF_DATE_RE.replace(col, "").trim()
+                    if (rest.isNotBlank() && !rest.matches(PDF_NUM_RE)) description = rest
+                }
+                col.matches(PDF_NUM_RE) -> parseAmount(col)?.takeIf { it > 0 }?.let { numbers.add(it) }
+                description == null && !isSummaryRow(col) -> description = col
+            }
+        }
+
+        if (description.isNullOrBlank() || numbers.isEmpty()) return null
+        if (isSummaryRow(description!!)) return null
+
+        // Last number is usually the running balance — drop it when ≥3 numbers present
+        val txNumbers = if (numbers.size >= 3) numbers.dropLast(1) else numbers
+
+        val amount: Double
+        val type: TransactionType
+
+        if (layout.hasDebit && layout.hasCredit && txNumbers.size >= 2) {
+            // Two amounts: whichever is non-zero in its column wins
+            val first  = txNumbers[0]
+            val second = txNumbers[1]
+            when {
+                first > 0 && second == 0.0 -> { amount = first;  type = if (layout.debitBeforeCredit) TransactionType.EXPENSE else TransactionType.INCOME }
+                second > 0 && first == 0.0 -> { amount = second; type = if (layout.debitBeforeCredit) TransactionType.INCOME  else TransactionType.EXPENSE }
+                else -> { amount = first; type = TransactionType.EXPENSE }
+            }
+        } else {
+            amount = txNumbers.first()
+            type = when {
+                layout.hasDebit && !layout.hasCredit  -> TransactionType.EXPENSE
+                layout.hasCredit && !layout.hasDebit  -> TransactionType.INCOME
+                else -> TransactionType.EXPENSE
+            }
+        }
+
+        if (amount == 0.0) return null
+        return ParsedTransaction(description = description!!, amount = amount, date = date, type = type, rawData = line)
+    }
+
+    /** Parse a line with no detected header (freeform). */
+    private fun parseFreeformLine(line: String): ParsedTransaction? {
+        val amountMatch = PDF_TRAILING_AMOUNT_RE.find(line) ?: return null
+        val amount = parseAmount(amountMatch.groupValues[1]) ?: return null
+        if (amount == 0.0) return null
+
+        val beforeAmount = line.substring(0, amountMatch.range.first).trim()
+        val dateMatch = PDF_DATE_RE.find(beforeAmount)
+        val date = dateMatch?.let { parseDate(it.value) }
+        val description = if (dateMatch != null)
+            beforeAmount.removeRange(dateMatch.range).trim()
+        else beforeAmount
+
+        if (description.isBlank() || isSummaryRow(description)) return null
+
+        val type = if (amountMatch.groupValues[1].startsWith("-")) TransactionType.EXPENSE else TransactionType.INCOME
+        return ParsedTransaction(description = description, amount = amount, date = date, type = type, rawData = line)
     }
 
     // ── Excel ──────────────────────────────────────────────────────────────────
@@ -407,6 +486,10 @@ class FileParserService @Inject constructor(
     // ── Keywords ──────────────────────────────────────────────────────────────
 
     companion object {
+        val PDF_DATE_RE = Regex("""\d{1,2}[./\-]\d{1,2}[./\-]\d{2,4}|\d{4}[./\-]\d{2}[./\-]\d{2}""")
+        val PDF_NUM_RE  = Regex("""^[-+]?[\d,]+(?:\.\d{1,2})?$""")
+        val PDF_TRAILING_AMOUNT_RE = Regex("""([-+]?\d[\d,]*(?:\.\d+)?)\s*(?:[₪${'$'}€£₽]|ILS|NIS)?\s*$""")
+
         // English + Hebrew + Russian column header keywords
         private val DATE_KEYWORDS = listOf(
             // English
