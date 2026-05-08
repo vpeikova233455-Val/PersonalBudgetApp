@@ -1,4 +1,4 @@
-package com.budgetapp.presentation.import
+package com.budgetapp.presentation.imports
 
 import android.content.Context
 import android.graphics.Bitmap

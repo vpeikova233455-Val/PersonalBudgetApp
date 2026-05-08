@@ -1,4 +1,4 @@
-package com.budgetapp.presentation.import
+package com.budgetapp.presentation.imports
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts

@@ -1,4 +1,4 @@
-package com.budgetapp.presentation.import
+package com.budgetapp.presentation.imports
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope

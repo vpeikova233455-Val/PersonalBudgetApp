@@ -25,9 +25,9 @@ import com.budgetapp.presentation.bugreport.BugReportButton
 import com.budgetapp.presentation.category.CategoriesScreen
 import com.budgetapp.presentation.components.BottomNavBar
 import com.budgetapp.presentation.dashboard.DashboardScreen
-import com.budgetapp.presentation.import.ImportOptionsScreen
-import com.budgetapp.presentation.import.OcrImportViewModel
-import com.budgetapp.presentation.import.ReviewTransactionsScreen
+import com.budgetapp.presentation.imports.ImportOptionsScreen
+import com.budgetapp.presentation.imports.OcrImportViewModel
+import com.budgetapp.presentation.imports.ReviewTransactionsScreen
 import com.budgetapp.presentation.settings.SettingsScreen
 import com.budgetapp.presentation.transaction.AddTransactionScreen
 import com.budgetapp.presentation.transaction.EditTransactionScreen

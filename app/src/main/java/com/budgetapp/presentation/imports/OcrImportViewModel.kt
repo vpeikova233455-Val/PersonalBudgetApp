@@ -1,4 +1,4 @@
-package com.budgetapp.presentation.import
+package com.budgetapp.presentation.imports
 
 import android.net.Uri
 import androidx.lifecycle.ViewModel
