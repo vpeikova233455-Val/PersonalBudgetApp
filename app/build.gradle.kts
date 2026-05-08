@@ -22,8 +22,8 @@ android {
         applicationId = "com.budgetapp"
         minSdk = 26
         targetSdk = 34
-        versionCode = 19
-        versionName = "2.1.4"
+        versionCode = 20
+        versionName = "2.1.5"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

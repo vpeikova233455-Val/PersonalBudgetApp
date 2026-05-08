@@ -1,5 +1,8 @@
 package com.budgetapp
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -39,7 +42,11 @@ class MainActivity : ComponentActivity() {
         android.app.AlertDialog.Builder(this)
             .setTitle("Previous Crash")
             .setMessage(crashLog.take(3000))
-            .setPositiveButton("OK", null)
+            .setPositiveButton("Copy & Close") { _, _ ->
+                val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("crash_log", crashLog))
+            }
+            .setNegativeButton("Close", null)
             .setCancelable(false)
             .show()
     }
