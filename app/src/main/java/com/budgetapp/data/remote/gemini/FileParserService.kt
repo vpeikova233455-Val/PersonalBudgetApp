@@ -95,113 +95,130 @@ class FileParserService @Inject constructor(
     private fun extractTransactionsFromText(text: String): List<ParsedTransaction> {
         val lines = text.lines().map { it.trim() }.filter { it.isNotBlank() }
 
-        // Detect header row → tells us whether debit or credit column comes first
+        // Find the header row: prefer one that has BOTH a debit AND credit keyword (e.g. חובה + זכות).
+        // Fall back to any row with a date keyword + any amount keyword.
         val headerIdx = lines.indexOfFirst { line ->
+            DEBIT_KEYWORDS.any { line.contains(it) } && CREDIT_KEYWORDS.any { line.contains(it) }
+        }.takeIf { it >= 0 } ?: lines.indexOfFirst { line ->
             val l = line.lowercase()
             DATE_KEYWORDS.any { l.contains(it) } &&
             (AMOUNT_KEYWORDS + DEBIT_KEYWORDS + CREDIT_KEYWORDS).any { l.contains(it) }
         }
-        val layout = if (headerIdx >= 0) detectLayout(lines[headerIdx]) else null
+
+        val header  = if (headerIdx >= 0) lines[headerIdx] else null
+        val layout  = header?.let { buildLayout(it) }
         val startIdx = if (headerIdx >= 0) headerIdx + 1 else 0
 
         return lines.drop(startIdx)
             .filter { !isSummaryRow(it) }
-            .mapNotNull { parsePdfLine(it, layout) }
+            .mapNotNull { parsePdfLine(it, layout, header) }
     }
 
+    // Stores the character-offset of each column inside the header string.
     private data class PdfColumnLayout(
-        val hasDebit: Boolean,
-        val hasCredit: Boolean,
-        val debitBeforeCredit: Boolean   // true when debit keyword appears left of credit in header
-    )
-
-    private fun detectLayout(header: String): PdfColumnLayout {
-        val l = header.lowercase()
-        val hasDebit  = DEBIT_KEYWORDS.any  { l.contains(it) }
-        val hasCredit = CREDIT_KEYWORDS.any { l.contains(it) }
-        val debitPos  = DEBIT_KEYWORDS.mapNotNull  { if (l.contains(it)) l.indexOf(it) else null }.minOrNull() ?: Int.MAX_VALUE
-        val creditPos = CREDIT_KEYWORDS.mapNotNull { if (l.contains(it)) l.indexOf(it) else null }.minOrNull() ?: Int.MAX_VALUE
-        return PdfColumnLayout(hasDebit, hasCredit, debitPos < creditPos)
+        val debitPos:   Int,   // char offset of חובה / debit keyword  (-1 = absent)
+        val creditPos:  Int,   // char offset of זכות / credit keyword  (-1 = absent)
+        val balancePos: Int    // char offset of יתרה / balance keyword (-1 = absent)
+    ) {
+        val hasDebit   get() = debitPos  >= 0
+        val hasCredit  get() = creditPos >= 0
+        val hasBalance get() = balancePos >= 0
     }
 
-    /**
-     * Core line parser — works for any column order / separator style.
-     *
-     * Strategy:
-     *  1. Require a date anywhere on the line.
-     *  2. Collect all numeric tokens (ignoring account/card numbers: 6+ digits, no decimal).
-     *  3. The last number on a line is usually the running balance — drop it when ≥ 3 numbers.
-     *  4. When two numbers remain: debit/credit columns — one is 0 (or near-zero).
-     *  5. The non-zero one is the transaction amount; column layout says which is which.
-     *  6. Description = everything that isn't the date and isn't a recognised number token.
-     */
-    private fun parsePdfLine(line: String, layout: PdfColumnLayout?): ParsedTransaction? {
-        // 1. Find date
+    private fun buildLayout(header: String): PdfColumnLayout {
+        fun firstPos(keywords: List<String>): Int =
+            keywords.mapNotNull { kw ->
+                val idx = header.indexOf(kw)
+                if (idx >= 0) idx else null
+            }.minOrNull() ?: -1
+
+        return PdfColumnLayout(
+            debitPos   = firstPos(DEBIT_KEYWORDS),
+            creditPos  = firstPos(CREDIT_KEYWORDS),
+            balancePos = firstPos(BALANCE_KEYWORDS)
+        )
+    }
+
+    private fun parsePdfLine(line: String, layout: PdfColumnLayout?, header: String?): ParsedTransaction? {
+        // Must have a date somewhere on the line
         val dateMatch = PDF_DATE_RE.find(line) ?: return null
         val date = parseDate(dateMatch.value)
 
-        // 2. Find all currency-style numbers (allow commas, up to 2 decimal places)
-        //    Exclude pure integers ≥ 6 digits (account/card/reference numbers).
-        data class NumToken(val value: Double, val start: Int, val raw: String)
-        val numTokens = PDF_NUM_FINDER.findAll(line)
-            .mapNotNull { m ->
-                val raw = m.value
-                // Skip pure integers that look like account/reference numbers (≥6 digits, no decimal/comma)
-                if (raw.length >= 6 && !raw.contains('.') && !raw.contains(',')) return@mapNotNull null
-                val v = parseAmount(raw) ?: return@mapNotNull null
-                if (v <= 0) return@mapNotNull null
-                NumToken(v, m.range.first, raw)
-            }.toList()
+        // Collect positive numeric tokens; skip pure-integer runs ≥ 6 digits (account/reference numbers)
+        data class Tok(val v: Double, val pos: Int, val raw: String)
+        val toks = PDF_NUM_FINDER.findAll(line).mapNotNull { m ->
+            val raw = m.value
+            if (raw.length >= 6 && !raw.contains('.') && !raw.contains(',')) return@mapNotNull null
+            val v = parseAmount(raw) ?: return@mapNotNull null
+            if (v <= 0) return@mapNotNull null
+            Tok(v, m.range.first, raw)
+        }.toList()
 
-        if (numTokens.isEmpty()) return null
+        if (toks.isEmpty()) return null
 
-        // 3. Drop last token when it's likely a running balance (≥ 3 numbers found)
-        val txTokens = if (numTokens.size >= 3) numTokens.dropLast(1) else numTokens
-
-        // 4. Determine amount + type
+        // ── Column-position matching (used when we know חובה + זכות positions) ──
         val amount: Double
         val type: TransactionType
 
-        if (layout != null && layout.hasDebit && layout.hasCredit && txTokens.size >= 2) {
-            val a = txTokens[0].value
-            val b = txTokens[1].value
-            when {
-                a > 0 && b < 0.01 -> { amount = a; type = if (layout.debitBeforeCredit) TransactionType.EXPENSE else TransactionType.INCOME }
-                b > 0 && a < 0.01 -> { amount = b; type = if (layout.debitBeforeCredit) TransactionType.INCOME  else TransactionType.EXPENSE }
-                else              -> { amount = maxOf(a, b); type = TransactionType.EXPENSE }
+        if (layout != null && layout.hasDebit && layout.hasCredit && header != null) {
+            // Map each numeric token to the nearest column using relative char position.
+            // Relative pos = token_start / line_len  vs  col_start / header_len
+            val hLen = header.length.coerceAtLeast(1).toDouble()
+            val lLen = line.length.coerceAtLeast(1).toDouble()
+
+            val debitRel   = layout.debitPos   / hLen
+            val creditRel  = layout.creditPos  / hLen
+            val balanceRel = if (layout.hasBalance) layout.balancePos / hLen else -1.0
+
+            data class Tagged(val tok: Tok, val col: String) // "debit"|"credit"|"balance"
+            val tagged = toks.map { t ->
+                val r = t.pos / lLen
+                val dDist = kotlin.math.abs(r - debitRel)
+                val cDist = kotlin.math.abs(r - creditRel)
+                val bDist = if (balanceRel >= 0) kotlin.math.abs(r - balanceRel) else Double.MAX_VALUE
+                val col = when (minOf(dDist, cDist, bDist)) {
+                    dDist -> "debit"
+                    cDist -> "credit"
+                    else  -> "balance"
+                }
+                Tagged(t, col)
             }
-        } else if (txTokens.size == 2) {
-            // No explicit layout — guess: the smaller value is the transaction, larger is balance
-            val smaller = txTokens.minByOrNull { it.value }!!
-            val debitKw = layout?.hasDebit == true
-            val creditKw = layout?.hasCredit == true
-            amount = smaller.value
-            type = when {
-                debitKw && !creditKw  -> TransactionType.EXPENSE
-                creditKw && !debitKw  -> TransactionType.INCOME
-                else                  -> TransactionType.EXPENSE
+
+            val debitTok  = tagged.filter { it.col == "debit"  }.maxByOrNull { it.tok.v }
+            val creditTok = tagged.filter { it.col == "credit" }.maxByOrNull { it.tok.v }
+
+            when {
+                debitTok  != null && (creditTok == null || creditTok.tok.v < 0.01) ->
+                    { amount = debitTok.tok.v;  type = TransactionType.EXPENSE }
+                creditTok != null && (debitTok  == null || debitTok.tok.v  < 0.01) ->
+                    { amount = creditTok.tok.v; type = TransactionType.INCOME  }
+                debitTok  != null ->
+                    { amount = debitTok.tok.v;  type = TransactionType.EXPENSE }
+                else -> return null
             }
         } else {
-            amount = txTokens.first().value
+            // ── Fallback: no column info — use position heuristics ──
+            // With ≥ 3 numbers, drop the last (running balance).
+            val txToks = if (toks.size >= 3) toks.dropLast(1) else toks
+            // With 2 remaining, the smaller is typically the transaction amount.
+            val chosen = if (txToks.size >= 2) txToks.minByOrNull { it.v }!! else txToks.first()
+            amount = chosen.v
             type = when {
-                layout?.hasDebit == true && layout.hasCredit != true -> TransactionType.EXPENSE
-                layout?.hasCredit == true && layout.hasDebit != true -> TransactionType.INCOME
+                layout?.hasDebit  == true && layout.hasCredit != true -> TransactionType.EXPENSE
+                layout?.hasCredit == true && layout.hasDebit  != true -> TransactionType.INCOME
                 else -> TransactionType.EXPENSE
             }
         }
 
         if (amount == 0.0) return null
 
-        // 5. Build description: strip date and all number tokens, collapse whitespace
+        // Build description: remove date + all numeric tokens, collapse whitespace
         var desc = line
-        // Remove date
         desc = desc.removeRange(dateMatch.range)
-        // Remove all number tokens (iterate in reverse to preserve indices)
-        numTokens.sortedByDescending { it.start }.forEach { t ->
-            val end = t.start + t.raw.length
-            if (end <= desc.length) desc = desc.removeRange(t.start, end)
+        toks.sortedByDescending { it.pos }.forEach { t ->
+            val end = (t.pos + t.raw.length).coerceAtMost(desc.length)
+            if (t.pos < desc.length) desc = desc.removeRange(t.pos, end)
         }
-        // Strip currency symbols and clean whitespace
         desc = desc.replace(Regex("[₪\$€£₽]|ILS|NIS|USD|EUR|RUB"), "")
             .replace(Regex("\\s{2,}"), " ").trim()
 
@@ -525,16 +542,16 @@ class FileParserService @Inject constructor(
         private val DEBIT_KEYWORDS = listOf(
             // English
             "debit", "withdrawal", "charge", "payment",
-            // Hebrew
-            "חיוב", "משיכה", "הוצאה",
+            // Hebrew — חובה is the primary debit column in Israeli bank statements
+            "חובה", "חיוב", "משיכה", "הוצאה",
             // Russian
             "дебет", "расход", "списание", "расходы"
         )
         private val CREDIT_KEYWORDS = listOf(
             // English
             "credit", "deposit", "income",
-            // Hebrew
-            "זיכוי", "הפקדה", "הכנסה",
+            // Hebrew — זכות is the primary credit column in Israeli bank statements
+            "זכות", "זיכוי", "הפקדה", "הכנסה",
             // Russian
             "кредит", "доход", "поступление", "приход", "зачисление"
         )
