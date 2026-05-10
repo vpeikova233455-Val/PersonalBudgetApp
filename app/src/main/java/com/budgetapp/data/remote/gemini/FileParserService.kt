@@ -116,10 +116,14 @@ class FileParserService @Inject constructor(
 
     // Stores the character-offset of each column inside the header string.
     private data class PdfColumnLayout(
-        val debitPos:   Int,   // char offset of חובה / debit keyword  (-1 = absent)
-        val creditPos:  Int,   // char offset of זכות / credit keyword  (-1 = absent)
-        val balancePos: Int    // char offset of יתרה / balance keyword (-1 = absent)
+        val datePos:    Int,   // char offset of תאריך / date keyword      (-1 = absent)
+        val descPos:    Int,   // char offset of סוג תנועה / desc keyword   (-1 = absent)
+        val debitPos:   Int,   // char offset of חובה / debit keyword       (-1 = absent)
+        val creditPos:  Int,   // char offset of זכות / credit keyword      (-1 = absent)
+        val balancePos: Int    // char offset of יתרה / balance keyword     (-1 = absent)
     ) {
+        val hasDate    get() = datePos   >= 0
+        val hasDesc    get() = descPos   >= 0
         val hasDebit   get() = debitPos  >= 0
         val hasCredit  get() = creditPos >= 0
         val hasBalance get() = balancePos >= 0
@@ -133,6 +137,8 @@ class FileParserService @Inject constructor(
             }.minOrNull() ?: -1
 
         return PdfColumnLayout(
+            datePos    = firstPos(DATE_KEYWORDS),
+            descPos    = firstPos(DESC_KEYWORDS),
             debitPos   = firstPos(DEBIT_KEYWORDS),
             creditPos  = firstPos(CREDIT_KEYWORDS),
             balancePos = firstPos(BALANCE_KEYWORDS)
@@ -140,15 +146,22 @@ class FileParserService @Inject constructor(
     }
 
     private fun parsePdfLine(line: String, layout: PdfColumnLayout?, header: String?): ParsedTransaction? {
-        // Must have a date somewhere on the line
+        // Must have a recognisable date
         val dateMatch = PDF_DATE_RE.find(line) ?: return null
         val date = parseDate(dateMatch.value)
+        val dateRange = dateMatch.range
 
-        // Collect positive numeric tokens; skip pure-integer runs ≥ 6 digits (account/reference numbers)
+        // Collect numeric tokens, skipping:
+        //   (a) any match whose range overlaps the date string — prevents date digits
+        //       like "01", "04", "2026" from being treated as amounts
+        //   (b) pure integers whose digit-only form is ≥ 6 chars — these are reference /
+        //       account numbers (e.g. 1234567); check digit count after stripping commas
         data class Tok(val v: Double, val pos: Int, val raw: String)
         val toks = PDF_NUM_FINDER.findAll(line).mapNotNull { m ->
+            if (m.range.first in dateRange || m.range.last in dateRange) return@mapNotNull null
             val raw = m.value
-            if (raw.length >= 6 && !raw.contains('.') && !raw.contains(',')) return@mapNotNull null
+            val digits = raw.replace(",", "")
+            if (digits.length >= 6 && !digits.contains('.')) return@mapNotNull null
             val v = parseAmount(raw) ?: return@mapNotNull null
             if (v <= 0) return@mapNotNull null
             Tok(v, m.range.first, raw)
@@ -156,32 +169,29 @@ class FileParserService @Inject constructor(
 
         if (toks.isEmpty()) return null
 
-        // ── Column-position matching (used when we know חובה + זכות positions) ──
+        // ── Map tokens to debit / credit / balance columns ───────────────────
         val amount: Double
         val type: TransactionType
 
         if (layout != null && layout.hasDebit && layout.hasCredit && header != null) {
-            // Map each numeric token to the nearest column using relative char position.
-            // Relative pos = token_start / line_len  vs  col_start / header_len
             val hLen = header.length.coerceAtLeast(1).toDouble()
             val lLen = line.length.coerceAtLeast(1).toDouble()
 
-            val debitRel   = layout.debitPos   / hLen
-            val creditRel  = layout.creditPos  / hLen
+            val debitRel   = layout.debitPos  / hLen
+            val creditRel  = layout.creditPos / hLen
             val balanceRel = if (layout.hasBalance) layout.balancePos / hLen else -1.0
 
-            data class Tagged(val tok: Tok, val col: String) // "debit"|"credit"|"balance"
+            data class Tagged(val tok: Tok, val col: String)
             val tagged = toks.map { t ->
                 val r = t.pos / lLen
                 val dDist = kotlin.math.abs(r - debitRel)
                 val cDist = kotlin.math.abs(r - creditRel)
                 val bDist = if (balanceRel >= 0) kotlin.math.abs(r - balanceRel) else Double.MAX_VALUE
-                val col = when (minOf(dDist, cDist, bDist)) {
+                Tagged(t, when (minOf(dDist, cDist, bDist)) {
                     dDist -> "debit"
                     cDist -> "credit"
                     else  -> "balance"
-                }
-                Tagged(t, col)
+                })
             }
 
             val debitTok  = tagged.filter { it.col == "debit"  }.maxByOrNull { it.tok.v }
@@ -197,30 +207,30 @@ class FileParserService @Inject constructor(
                 else -> return null
             }
         } else {
-            // ── Fallback: no column info — use position heuristics ──
-            // With ≥ 3 numbers, drop the last (running balance).
-            val txToks = if (toks.size >= 3) toks.dropLast(1) else toks
-            // With 2 remaining, the smaller is typically the transaction amount.
-            val chosen = if (txToks.size >= 2) txToks.minByOrNull { it.v }!! else txToks.first()
+            // No column layout — drop last token (running balance) and take smallest remaining
+            val txToks = if (toks.size >= 2) toks.dropLast(1) else toks
+            val chosen = txToks.minByOrNull { it.v } ?: return null
             amount = chosen.v
-            type = when {
-                layout?.hasDebit  == true && layout.hasCredit != true -> TransactionType.EXPENSE
-                layout?.hasCredit == true && layout.hasDebit  != true -> TransactionType.INCOME
-                else -> TransactionType.EXPENSE
-            }
+            type = TransactionType.EXPENSE
         }
 
         if (amount == 0.0) return null
 
-        // Build description: remove date + all numeric tokens, collapse whitespace
-        var desc = line
-        desc = desc.removeRange(dateMatch.range)
-        toks.sortedByDescending { it.pos }.forEach { t ->
-            val end = (t.pos + t.raw.length).coerceAtMost(desc.length)
-            if (t.pos < desc.length) desc = desc.removeRange(t.pos, end)
+        // ── Build description ────────────────────────────────────────────────
+        // Mark every character that belongs to the date or ANY numeric token as
+        // "remove" using a boolean array, then rebuild the string in one pass.
+        // This avoids the index-shift bugs that occur with sequential removeRange calls.
+        val keep = BooleanArray(line.length) { true }
+        dateRange.forEach { if (it < line.length) keep[it] = false }
+        PDF_NUM_FINDER.findAll(line).forEach { m ->
+            m.range.forEach { if (it < line.length) keep[it] = false }
         }
-        desc = desc.replace(Regex("[₪\$€£₽]|ILS|NIS|USD|EUR|RUB"), "")
-            .replace(Regex("\\s{2,}"), " ").trim()
+
+        var desc = line.filterIndexed { i, _ -> keep[i] }
+            .replace(Regex("[₪\$€£₽]|ILS|NIS|USD|EUR|RUB"), "")
+            .replace(Regex("[|/\\\\]"), " ")
+            .replace(Regex("\\s{2,}"), " ")
+            .trim()
 
         if (desc.isBlank() || isSummaryRow(desc)) return null
 
@@ -524,9 +534,9 @@ class FileParserService @Inject constructor(
         )
         private val DESC_KEYWORDS = listOf(
             // English
-            "description", "details", "memo", "narrative", "payee", "merchant", "reference",
-            // Hebrew
-            "תיאור", "פרטים", "שם בית עסק", "מוטב", "הערות", "אסמכתא",
+            "description", "details", "memo", "narrative", "payee", "merchant",
+            // Hebrew — סוג תנועה is the primary transaction-type column in Israeli bank statements
+            "סוג תנועה", "תיאור", "פרטים", "שם בית עסק", "מוטב", "הערות",
             // Russian
             "описание", "назначение", "контрагент", "получатель", "отправитель",
             "детали", "наименование", "комментарий"
