@@ -1,18 +1,34 @@
 package com.budgetapp.presentation.settings
 
-import androidx.lifecycle.ViewModel
-import androidx.lifecycle.viewModelScope
+import android.content.Context
+import android.os.Build
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.os.LocaleListCompat
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.budgetapp.BuildConfig
+import com.budgetapp.core.constants.Constants.KEY_GITHUB_OWNER
+import com.budgetapp.core.constants.Constants.KEY_GITHUB_REPO
+import com.budgetapp.core.constants.Constants.KEY_GITHUB_TOKEN
+import com.budgetapp.core.security.EncryptionManager
 import com.budgetapp.core.util.Result
 import com.budgetapp.core.util.toDateString
+import com.budgetapp.data.remote.github.GitHubService
 import com.budgetapp.domain.repository.AuthRepository
 import com.budgetapp.domain.repository.SyncRepository
 import com.budgetapp.domain.repository.SyncStatus
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+
+sealed class BugReportStatus {
+    object Idle : BugReportStatus()
+    object Loading : BugReportStatus()
+    data class Success(val issueUrl: String) : BugReportStatus()
+    data class Error(val message: String) : BugReportStatus()
+}
 
 data class SettingsUiState(
     val userEmail: String = "",
@@ -21,16 +37,28 @@ data class SettingsUiState(
     val isLoggingOut: Boolean = false,
     val logoutError: String? = null,
     val logoutSuccess: Boolean = false,
-    val currentLanguage: String = "en"
+    val currentLanguage: String = "en",
+    val githubToken: String = "",
+    val githubOwner: String = "",
+    val githubRepo: String = "",
+    val bugReportStatus: BugReportStatus = BugReportStatus.Idle
 )
 
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     private val authRepository: AuthRepository,
-    private val syncRepository: SyncRepository
+    private val syncRepository: SyncRepository,
+    private val gitHubService: GitHubService,
+    @ApplicationContext private val context: Context
 ) : ViewModel() {
 
-    private val _uiState = MutableStateFlow(SettingsUiState())
+    private val _uiState = MutableStateFlow(
+        SettingsUiState(
+            githubToken = EncryptionManager.getString(context, KEY_GITHUB_TOKEN) ?: "",
+            githubOwner = EncryptionManager.getString(context, KEY_GITHUB_OWNER) ?: "",
+            githubRepo = EncryptionManager.getString(context, KEY_GITHUB_REPO) ?: ""
+        )
+    )
     val uiState: StateFlow<SettingsUiState> = _uiState.asStateFlow()
 
     init {
@@ -41,7 +69,6 @@ class SettingsViewModel @Inject constructor(
 
     private fun loadUserInfo() {
         viewModelScope.launch {
-            // Get user email from Firebase Auth
             val email = "user@example.com" // TODO: Get from AuthRepository
             _uiState.update { it.copy(userEmail = email) }
         }
@@ -84,6 +111,55 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    fun saveGitHubSettings(token: String, owner: String, repo: String) {
+        EncryptionManager.saveString(context, KEY_GITHUB_TOKEN, token)
+        EncryptionManager.saveString(context, KEY_GITHUB_OWNER, owner)
+        EncryptionManager.saveString(context, KEY_GITHUB_REPO, repo)
+        _uiState.update { it.copy(githubToken = token, githubOwner = owner, githubRepo = repo) }
+    }
+
+    fun submitBugReport(title: String, description: String) {
+        val state = _uiState.value
+        if (state.githubToken.isBlank() || state.githubOwner.isBlank() || state.githubRepo.isBlank()) {
+            _uiState.update {
+                it.copy(bugReportStatus = BugReportStatus.Error("Configure GitHub settings first."))
+            }
+            return
+        }
+        viewModelScope.launch {
+            _uiState.update { it.copy(bugReportStatus = BugReportStatus.Loading) }
+
+            val body = buildString {
+                append(description.trim())
+                if (description.isNotBlank()) append("\n\n---\n")
+                append("**App Version:** ${BuildConfig.VERSION_NAME}\n")
+                append("**Android:** ${Build.VERSION.RELEASE}\n")
+                append("**Device:** ${Build.MANUFACTURER} ${Build.MODEL}")
+            }
+
+            gitHubService.createIssue(
+                token = state.githubToken,
+                owner = state.githubOwner,
+                repo = state.githubRepo,
+                title = title,
+                body = body
+            ).fold(
+                onSuccess = { url ->
+                    _uiState.update { it.copy(bugReportStatus = BugReportStatus.Success(url)) }
+                },
+                onFailure = { e ->
+                    _uiState.update {
+                        it.copy(bugReportStatus = BugReportStatus.Error(e.message ?: "Unknown error"))
+                    }
+                }
+            )
+        }
+    }
+
+    fun clearBugReportStatus() {
+        _uiState.update { it.copy(bugReportStatus = BugReportStatus.Idle) }
+    }
+
     fun logout() {
         viewModelScope.launch {
             _uiState.update { it.copy(isLoggingOut = true, logoutError = null) }
@@ -91,10 +167,7 @@ class SettingsViewModel @Inject constructor(
             when (val result = authRepository.logout()) {
                 is Result.Success -> {
                     _uiState.update {
-                        it.copy(
-                            isLoggingOut = false,
-                            logoutSuccess = true
-                        )
+                        it.copy(isLoggingOut = false, logoutSuccess = true)
                     }
                 }
                 is Result.Error -> {

@@ -13,6 +13,9 @@ object Constants {
     const val PREFS_NAME = "secure_prefs"
     const val KEY_USER_ID = "user_id"
     const val KEY_DEVICE_ID = "device_id"
+    const val KEY_GITHUB_TOKEN = "github_access_token"
+    const val KEY_GITHUB_OWNER = "github_owner"
+    const val KEY_GITHUB_REPO = "github_repo"
 
     // AI
     const val GEMINI_MODEL = "gemini-1.5-flash"

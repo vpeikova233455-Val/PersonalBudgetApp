@@ -6,15 +6,20 @@ import android.content.Context
 import android.content.Intent
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.budgetapp.data.export.ExportFormat
@@ -34,9 +39,23 @@ fun SettingsScreen(
     val context = LocalContext.current
 
     var showExportDialog by remember { mutableStateOf(false) }
+    var showBugReportDialog by remember { mutableStateOf(false) }
     var crashLog by remember { mutableStateOf<String?>(null) }
 
-    // Launch share sheet whenever the ViewModel emits a share intent
+    // GitHub settings fields — initialized once from loaded ViewModel state
+    var tokenField by rememberSaveable { mutableStateOf(uiState.githubToken) }
+    var ownerField by rememberSaveable { mutableStateOf(uiState.githubOwner) }
+    var repoField by rememberSaveable { mutableStateOf(uiState.githubRepo) }
+    var githubFieldsInitialized by rememberSaveable { mutableStateOf(false) }
+    if (!githubFieldsInitialized &&
+        (uiState.githubToken.isNotEmpty() || uiState.githubOwner.isNotEmpty() || uiState.githubRepo.isNotEmpty())
+    ) {
+        tokenField = uiState.githubToken
+        ownerField = uiState.githubOwner
+        repoField = uiState.githubRepo
+        githubFieldsInitialized = true
+    }
+
     LaunchedEffect(Unit) {
         exportViewModel.shareEvent.collect { intent ->
             context.startActivity(intent)
@@ -52,6 +71,49 @@ fun SettingsScreen(
             },
             onDismiss = { showExportDialog = false }
         )
+    }
+
+    if (showBugReportDialog) {
+        BugReportDialog(
+            isSubmitting = uiState.bugReportStatus is BugReportStatus.Loading,
+            onSubmit = { title, description ->
+                viewModel.submitBugReport(title, description)
+            },
+            onDismiss = { showBugReportDialog = false }
+        )
+    }
+
+    // Bug report result dialogs
+    when (val status = uiState.bugReportStatus) {
+        is BugReportStatus.Success -> {
+            showBugReportDialog = false
+            AlertDialog(
+                onDismissRequest = viewModel::clearBugReportStatus,
+                title = { Text("Bug Reported") },
+                text = { Text("Issue created successfully.\n\n${status.issueUrl}") },
+                confirmButton = {
+                    Button(onClick = {
+                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        clipboard.setPrimaryClip(ClipData.newPlainText("issue_url", status.issueUrl))
+                        viewModel.clearBugReportStatus()
+                    }) { Text("Copy Link") }
+                },
+                dismissButton = {
+                    TextButton(onClick = viewModel::clearBugReportStatus) { Text("Close") }
+                }
+            )
+        }
+        is BugReportStatus.Error -> {
+            AlertDialog(
+                onDismissRequest = viewModel::clearBugReportStatus,
+                title = { Text("Failed to Report Bug") },
+                text = { Text(status.message) },
+                confirmButton = {
+                    TextButton(onClick = viewModel::clearBugReportStatus) { Text("OK") }
+                }
+            )
+        }
+        else -> {}
     }
 
     if (exportState.error != null) {
@@ -81,6 +143,7 @@ fun SettingsScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
+                .verticalScroll(rememberScrollState())
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
@@ -243,6 +306,14 @@ fun SettingsScreen(
                         }
                     )
 
+                    HorizontalDivider()
+
+                    SettingsRow(
+                        icon = Icons.Default.BugReport,
+                        label = "Report a Bug",
+                        onClick = { showBugReportDialog = true }
+                    )
+
                     val crashFile = File(context.filesDir, "last_crash.txt")
                     if (crashFile.exists()) {
                         HorizontalDivider()
@@ -254,6 +325,19 @@ fun SettingsScreen(
                     }
                 }
             }
+
+            // GitHub Integration
+            GitHubSettingsCard(
+                tokenField = tokenField,
+                ownerField = ownerField,
+                repoField = repoField,
+                onTokenChange = { tokenField = it },
+                onOwnerChange = { ownerField = it },
+                onRepoChange = { repoField = it },
+                onSave = { viewModel.saveGitHubSettings(tokenField, ownerField, repoField) }
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
         }
     }
 
@@ -262,7 +346,7 @@ fun SettingsScreen(
             onDismissRequest = { crashLog = null },
             title = { Text("Last Crash Log") },
             text = {
-                val scrollState = androidx.compose.foundation.rememberScrollState()
+                val scrollState = rememberScrollState()
                 Text(
                     text = log.take(3000),
                     style = MaterialTheme.typography.bodySmall,
@@ -283,6 +367,162 @@ fun SettingsScreen(
             }
         )
     }
+}
+
+@Composable
+private fun GitHubSettingsCard(
+    tokenField: String,
+    ownerField: String,
+    repoField: String,
+    onTokenChange: (String) -> Unit,
+    onOwnerChange: (String) -> Unit,
+    onRepoChange: (String) -> Unit,
+    onSave: () -> Unit
+) {
+    var tokenVisible by rememberSaveable { mutableStateOf(false) }
+    var saved by rememberSaveable { mutableStateOf(false) }
+
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(
+                "GitHub Integration",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Text(
+                "Used to open GitHub issues when you report a bug.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            OutlinedTextField(
+                value = tokenField,
+                onValueChange = {
+                    onTokenChange(it)
+                    saved = false
+                },
+                label = { Text("Personal Access Token") },
+                placeholder = { Text("ghp_...") },
+                visualTransformation = if (tokenVisible) VisualTransformation.None
+                                        else PasswordVisualTransformation(),
+                trailingIcon = {
+                    IconButton(onClick = { tokenVisible = !tokenVisible }) {
+                        Icon(
+                            if (tokenVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                            contentDescription = if (tokenVisible) "Hide token" else "Show token"
+                        )
+                    }
+                },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            OutlinedTextField(
+                value = ownerField,
+                onValueChange = {
+                    onOwnerChange(it)
+                    saved = false
+                },
+                label = { Text("GitHub Owner") },
+                placeholder = { Text("username or org") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            OutlinedTextField(
+                value = repoField,
+                onValueChange = {
+                    onRepoChange(it)
+                    saved = false
+                },
+                label = { Text("Repository Name") },
+                placeholder = { Text("my-repo") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (saved) {
+                    Text(
+                        "Saved",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(end = 12.dp)
+                    )
+                }
+                Button(
+                    onClick = {
+                        onSave()
+                        saved = true
+                    },
+                    enabled = tokenField.isNotBlank() || ownerField.isNotBlank() || repoField.isNotBlank()
+                ) {
+                    Text("Save")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BugReportDialog(
+    isSubmitting: Boolean,
+    onSubmit: (title: String, description: String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var title by rememberSaveable { mutableStateOf("") }
+    var description by rememberSaveable { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = { if (!isSubmitting) onDismiss() },
+        title = { Text("Report a Bug") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedTextField(
+                    value = title,
+                    onValueChange = { title = it },
+                    label = { Text("Title") },
+                    placeholder = { Text("Brief description of the issue") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !isSubmitting
+                )
+                OutlinedTextField(
+                    value = description,
+                    onValueChange = { description = it },
+                    label = { Text("Details (optional)") },
+                    placeholder = { Text("Steps to reproduce, expected vs actual behaviour…") },
+                    minLines = 3,
+                    maxLines = 6,
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !isSubmitting
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onSubmit(title.trim(), description.trim()) },
+                enabled = title.isNotBlank() && !isSubmitting
+            ) {
+                if (isSubmitting) {
+                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                } else {
+                    Text("Submit")
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !isSubmitting) { Text("Cancel") }
+        }
+    )
 }
 
 @Composable
@@ -322,7 +562,6 @@ private fun ExportDialog(
         title = { Text("Export Transactions") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                // Format
                 Text("Format", style = MaterialTheme.typography.labelLarge)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     ExportFormat.values().forEach { fmt ->
@@ -339,7 +578,6 @@ private fun ExportDialog(
                     }
                 }
 
-                // Range
                 Text("Period", style = MaterialTheme.typography.labelLarge)
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     ExportRange.values().forEach { rng ->
