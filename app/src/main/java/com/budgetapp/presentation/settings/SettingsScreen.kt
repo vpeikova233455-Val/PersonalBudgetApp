@@ -42,18 +42,27 @@ fun SettingsScreen(
     var showBugReportDialog by remember { mutableStateOf(false) }
     var crashLog by remember { mutableStateOf<String?>(null) }
 
-    // GitHub settings fields — initialized once from loaded ViewModel state
-    var tokenField by rememberSaveable { mutableStateOf(uiState.githubToken) }
-    var ownerField by rememberSaveable { mutableStateOf(uiState.githubOwner) }
-    var repoField by rememberSaveable { mutableStateOf(uiState.githubRepo) }
+    // Close the bug report dialog as soon as a result (success or error) arrives
+    LaunchedEffect(uiState.bugReportStatus) {
+        if (uiState.bugReportStatus !is BugReportStatus.Idle &&
+            uiState.bugReportStatus !is BugReportStatus.Loading
+        ) {
+            showBugReportDialog = false
+        }
+    }
+
+    // GitHub settings fields — initialized once when the ViewModel delivers saved values
+    var tokenField by rememberSaveable { mutableStateOf("") }
+    var ownerField by rememberSaveable { mutableStateOf("") }
+    var repoField by rememberSaveable { mutableStateOf("") }
     var githubFieldsInitialized by rememberSaveable { mutableStateOf(false) }
-    if (!githubFieldsInitialized &&
-        (uiState.githubToken.isNotEmpty() || uiState.githubOwner.isNotEmpty() || uiState.githubRepo.isNotEmpty())
-    ) {
-        tokenField = uiState.githubToken
-        ownerField = uiState.githubOwner
-        repoField = uiState.githubRepo
-        githubFieldsInitialized = true
+    LaunchedEffect(uiState.githubToken, uiState.githubOwner, uiState.githubRepo) {
+        if (!githubFieldsInitialized) {
+            tokenField = uiState.githubToken
+            ownerField = uiState.githubOwner
+            repoField = uiState.githubRepo
+            githubFieldsInitialized = true
+        }
     }
 
     LaunchedEffect(Unit) {

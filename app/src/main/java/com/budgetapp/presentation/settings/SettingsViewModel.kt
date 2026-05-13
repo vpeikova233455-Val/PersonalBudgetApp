@@ -119,10 +119,16 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun submitBugReport(title: String, description: String) {
-        val state = _uiState.value
-        if (state.githubToken.isBlank() || state.githubOwner.isBlank() || state.githubRepo.isBlank()) {
+        // Read directly from prefs — source of truth, survives ViewModel recreation
+        val token = EncryptionManager.getString(context, KEY_GITHUB_TOKEN).orEmpty()
+        val owner = EncryptionManager.getString(context, KEY_GITHUB_OWNER).orEmpty()
+        val repo  = EncryptionManager.getString(context, KEY_GITHUB_REPO).orEmpty()
+
+        if (token.isBlank() || owner.isBlank() || repo.isBlank()) {
             _uiState.update {
-                it.copy(bugReportStatus = BugReportStatus.Error("Configure GitHub settings first."))
+                it.copy(bugReportStatus = BugReportStatus.Error(
+                    "GitHub settings not configured. Fill in your token, owner, and repo in the GitHub Integration section, then tap Save."
+                ))
             }
             return
         }
@@ -138,9 +144,9 @@ class SettingsViewModel @Inject constructor(
             }
 
             gitHubService.createIssue(
-                token = state.githubToken,
-                owner = state.githubOwner,
-                repo = state.githubRepo,
+                token = token,
+                owner = owner,
+                repo = repo,
                 title = title,
                 body = body
             ).fold(
