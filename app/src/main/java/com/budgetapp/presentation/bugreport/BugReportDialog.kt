@@ -14,8 +14,13 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.budgetapp.BuildConfig
 import com.budgetapp.core.bugreport.BugReportManager
+import com.budgetapp.core.constants.Constants.KEY_GITHUB_OWNER
+import com.budgetapp.core.constants.Constants.KEY_GITHUB_REPO
+import com.budgetapp.core.constants.Constants.KEY_GITHUB_TOKEN
+import com.budgetapp.core.security.EncryptionManager
 import com.budgetapp.core.util.AppLogger
 import kotlinx.coroutines.launch
+import java.io.File
 
 private val LABELS = listOf("ui", "crash", "data", "performance", "feature-request")
 
@@ -32,6 +37,7 @@ fun BugReportDialog(
     var resultMessage by remember { mutableStateOf<String?>(null) }
     var submitSuccess by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
 
     AlertDialog(
         onDismissRequest = { if (!isSubmitting) onDismiss() },
@@ -120,13 +126,37 @@ fun BugReportDialog(
                         AppLogger.i("BugReportDialog", "Submitting bug report: $title")
                         isSubmitting = true
                         scope.launch {
+                            // Credentials: EncryptedSharedPreferences first, BuildConfig as fallback
+                            val token = EncryptionManager.getString(context, KEY_GITHUB_TOKEN)
+                                .orEmpty().ifBlank { BuildConfig.GITHUB_TOKEN }
+                            val owner = EncryptionManager.getString(context, KEY_GITHUB_OWNER)
+                                .orEmpty().ifBlank { BuildConfig.GITHUB_OWNER }
+                            val repo = EncryptionManager.getString(context, KEY_GITHUB_REPO)
+                                .orEmpty().ifBlank { BuildConfig.GITHUB_REPO }
+
+                            // Combine in-memory logs with last crash log if present
+                            val crashLog = runCatching {
+                                File(context.filesDir, "last_crash.txt")
+                                    .takeIf { it.exists() }?.readText()
+                            }.getOrNull()
+                            val logs = buildString {
+                                append(AppLogger.getLogs())
+                                if (!crashLog.isNullOrBlank()) {
+                                    append("\n\n=== LAST CRASH LOG ===\n")
+                                    append(crashLog)
+                                }
+                            }
+
                             val result = BugReportManager.submitBugReport(
                                 title = title.trim(),
                                 description = description.trim(),
                                 labels = selectedLabels.toList(),
                                 screenshot = screenshot,
                                 deviceInfo = BugReportManager.getDeviceInfo(BuildConfig.VERSION_NAME),
-                                logs = AppLogger.getLogs()
+                                logs = logs,
+                                token = token,
+                                owner = owner,
+                                repo = repo
                             )
                             isSubmitting = false
                             submitSuccess = result.success

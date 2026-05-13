@@ -74,14 +74,13 @@ object BugReportManager {
         labels: List<String>,
         screenshot: Bitmap?,
         deviceInfo: String,
-        logs: String
+        logs: String,
+        token: String = BuildConfig.GITHUB_TOKEN,
+        owner: String = BuildConfig.GITHUB_OWNER,
+        repo: String = BuildConfig.GITHUB_REPO
     ): BugReportResult = withContext(Dispatchers.IO) {
-        val token = BuildConfig.GITHUB_TOKEN
-        val owner = BuildConfig.GITHUB_OWNER
-        val repo = BuildConfig.GITHUB_REPO
-
         if (token.isBlank() || owner.isBlank() || repo.isBlank()) {
-            val msg = "GitHub not configured — add github.token, github.owner, github.repo to local.properties"
+            val msg = "GitHub not configured. Please set your token, owner, and repo in Settings → GitHub Integration."
             AppLogger.w(TAG, msg)
             return@withContext BugReportResult(false, error = msg)
         }
@@ -94,8 +93,7 @@ object BugReportManager {
                     .getOrNull()
             }
             val body = buildIssueBody(description, deviceInfo, logs, screenshotUrl)
-            val allLabels = (listOf("bug") + labels).distinct()
-            val issueUrl = createIssue(title, body, allLabels, token, owner, repo)
+            val issueUrl = createIssue(title, body, labels, token, owner, repo)
             AppLogger.i(TAG, "Issue created: $issueUrl")
             BugReportResult(success = true, issueUrl = issueUrl)
         } catch (e: Exception) {
@@ -169,18 +167,26 @@ object BugReportManager {
         val payload = JSONObject().apply {
             put("title", title)
             put("body", body)
-            put("labels", JSONArray(labels))
+            if (labels.isNotEmpty()) put("labels", JSONArray(labels))
         }
 
         val conn = openConnection("POST", "https://api.github.com/repos/$owner/$repo/issues", token)
         conn.outputStream.bufferedWriter().use { it.write(payload.toString()) }
 
         val code = conn.responseCode
-        if (code != 201) {
-            val err = conn.errorStream?.bufferedReader()?.readText()
-            throw Exception("GitHub API HTTP $code: $err")
+        if (code == 201) {
+            return JSONObject(conn.inputStream.bufferedReader().readText()).getString("html_url")
         }
-        return JSONObject(conn.inputStream.bufferedReader().readText()).getString("html_url")
+
+        val errBody = conn.errorStream?.bufferedReader()?.readText().orEmpty()
+
+        // Labels not found in the repo — retry without them
+        if (code == 422 && labels.isNotEmpty()) {
+            AppLogger.w(TAG, "Labels rejected by GitHub (422), retrying without labels")
+            return createIssue(title, body, emptyList(), token, owner, repo)
+        }
+
+        throw Exception("GitHub API HTTP $code: $errBody")
     }
 
     private fun openConnection(method: String, urlStr: String, token: String): HttpURLConnection {
