@@ -2,7 +2,6 @@ package com.budgetapp.data.remote.github
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
@@ -35,7 +34,6 @@ class GitHubService @Inject constructor() {
                 val payload = JSONObject().apply {
                     put("title", title)
                     put("body", body)
-                    put("labels", JSONArray().put("bug"))
                 }.toString()
 
                 connection.outputStream.use { it.write(payload.toByteArray()) }

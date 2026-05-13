@@ -95,7 +95,6 @@ fun SettingsScreen(
     // Bug report result dialogs
     when (val status = uiState.bugReportStatus) {
         is BugReportStatus.Success -> {
-            showBugReportDialog = false
             AlertDialog(
                 onDismissRequest = viewModel::clearBugReportStatus,
                 title = { Text("Bug Reported") },
