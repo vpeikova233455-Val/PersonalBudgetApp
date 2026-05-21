@@ -44,4 +44,14 @@ class Converters {
     fun toImportSource(value: String): ImportSource {
         return ImportSource.valueOf(value)
     }
+
+    @TypeConverter
+    fun fromAccountType(value: AccountType): String {
+        return value.name
+    }
+
+    @TypeConverter
+    fun toAccountType(value: String): AccountType {
+        return runCatching { AccountType.valueOf(value) }.getOrDefault(AccountType.OTHER)
+    }
 }

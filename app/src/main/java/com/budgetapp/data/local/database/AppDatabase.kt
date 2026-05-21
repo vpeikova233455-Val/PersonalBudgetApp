@@ -18,7 +18,7 @@ import com.budgetapp.data.local.entity.*
         UserCategoryPreference::class,
         PensionAccountEntity::class
     ],
-    version = 2,
+    version = 3,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
@@ -39,6 +39,13 @@ abstract class AppDatabase : RoomDatabase() {
             override fun migrate(database: SupportSQLiteDatabase) {
                 database.execSQL("ALTER TABLE transactions ADD COLUMN bankName TEXT")
                 database.execSQL("ALTER TABLE user_category_preferences ADD COLUMN isAutomatic INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("ALTER TABLE pension_accounts ADD COLUMN accountType TEXT NOT NULL DEFAULT 'PENSION'")
+                database.execSQL("ALTER TABLE pension_accounts ADD COLUMN notes TEXT NOT NULL DEFAULT ''")
             }
         }
     }

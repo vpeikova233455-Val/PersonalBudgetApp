@@ -28,6 +28,7 @@ import com.budgetapp.presentation.dashboard.DashboardScreen
 import com.budgetapp.presentation.imports.ImportOptionsScreen
 import com.budgetapp.presentation.imports.OcrImportViewModel
 import com.budgetapp.presentation.imports.ReviewTransactionsScreen
+import com.budgetapp.presentation.savings.SavingsScreen
 import com.budgetapp.presentation.settings.SettingsScreen
 import com.budgetapp.presentation.transaction.AddTransactionScreen
 import com.budgetapp.presentation.transaction.EditTransactionScreen
@@ -36,7 +37,7 @@ import com.budgetapp.presentation.update.UpdateDialog
 import com.budgetapp.presentation.update.UpdateState
 import com.budgetapp.presentation.update.UpdateViewModel
 
-private val bottomNavRoutes = setOf("dashboard", "transactions", "budget", "settings")
+private val bottomNavRoutes = setOf("dashboard", "transactions", "budget", "savings", "settings")
 
 @Composable
 fun AppNavigation() {
@@ -98,6 +99,10 @@ fun AppNavigation() {
 
                 composable("budget") {
                     BudgetScreen()
+                }
+
+                composable("savings") {
+                    SavingsScreen()
                 }
 
                 composable("add_transaction") {

@@ -56,4 +56,12 @@ object RepositoryModule {
     ): AuthRepository {
         return AuthRepositoryImpl(firebaseAuth)
     }
+
+    @Provides
+    @Singleton
+    fun provideSavingsRepository(
+        pensionAccountDao: com.budgetapp.data.local.database.dao.PensionAccountDao
+    ): com.budgetapp.domain.repository.SavingsRepository {
+        return com.budgetapp.data.repository.SavingsRepositoryImpl(pensionAccountDao)
+    }
 }

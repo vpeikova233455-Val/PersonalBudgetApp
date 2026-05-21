@@ -13,6 +13,8 @@ data class PensionAccountEntity(
     val contributionAmount: Double,
     val employerContribution: Double? = null,
     val contributionFrequency: RecurrenceFrequency,
+    val accountType: AccountType = AccountType.PENSION,
+    val notes: String = "",
     val syncStatus: SyncStatus = SyncStatus.PENDING,
     val lastModifiedTimestamp: Long = System.currentTimeMillis()
 )

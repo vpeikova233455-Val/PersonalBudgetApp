@@ -5,6 +5,7 @@ import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Receipt
+import androidx.compose.material.icons.filled.Savings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -19,6 +20,7 @@ sealed class BottomNavItem(val route: String, val label: String, val icon: Image
     object Home : BottomNavItem("dashboard", "Home", Icons.Default.Home)
     object Transactions : BottomNavItem("transactions", "Activity", Icons.Default.Receipt)
     object Budget : BottomNavItem("budget", "Budget", Icons.Default.AccountBalanceWallet)
+    object Savings : BottomNavItem("savings", "Savings", Icons.Default.Savings)
     object Profile : BottomNavItem("settings", "Profile", Icons.Default.Person)
 }
 
@@ -26,6 +28,7 @@ val bottomNavItems = listOf(
     BottomNavItem.Home,
     BottomNavItem.Transactions,
     BottomNavItem.Budget,
+    BottomNavItem.Savings,
     BottomNavItem.Profile,
 )
 

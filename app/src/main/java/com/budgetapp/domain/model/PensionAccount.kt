@@ -1,5 +1,6 @@
 package com.budgetapp.domain.model
 
+import com.budgetapp.data.local.entity.AccountType
 import com.budgetapp.data.local.entity.RecurrenceFrequency
 
 data class PensionAccount(
@@ -9,7 +10,9 @@ data class PensionAccount(
     val currentValue: Double,
     val contributionAmount: Double,
     val employerContribution: Double?,
-    val contributionFrequency: RecurrenceFrequency
+    val contributionFrequency: RecurrenceFrequency,
+    val accountType: AccountType = AccountType.PENSION,
+    val notes: String = ""
 ) {
     val totalMonthlyContribution: Double
         get() = contributionAmount + (employerContribution ?: 0.0)
