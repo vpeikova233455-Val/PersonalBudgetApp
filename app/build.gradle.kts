@@ -22,8 +22,8 @@ android {
         applicationId = "com.budgetapp"
         minSdk = 26
         targetSdk = 34
-        versionCode = 32
-        versionName = "2.4.0"
+        versionCode = 33
+        versionName = "2.5.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -145,6 +145,9 @@ dependencies {
 
     // WorkManager
     implementation("androidx.work:work-runtime-ktx:2.9.0")
+
+    // Google Sign-In (for Drive OAuth)
+    implementation("com.google.android.gms:play-services-auth:21.2.0")
 
     // Security & Encryption
     implementation("androidx.security:security-crypto:1.1.0-alpha06")

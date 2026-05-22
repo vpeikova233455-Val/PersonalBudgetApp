@@ -1,9 +1,12 @@
 package com.budgetapp.presentation.settings
 
+import android.app.Activity
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
@@ -24,7 +27,13 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.budgetapp.data.export.ExportFormat
 import com.budgetapp.data.export.ExportRange
+import com.google.android.gms.auth.api.signin.GoogleSignIn
+import com.google.android.gms.auth.api.signin.GoogleSignInOptions
+import com.google.android.gms.common.api.Scope
 import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -334,6 +343,13 @@ fun SettingsScreen(
                 }
             }
 
+            // Google Drive Backup
+            DriveBackupCard(
+                uiState = uiState,
+                viewModel = viewModel,
+                context = context
+            )
+
             // GitHub Integration
             GitHubSettingsCard(
                 tokenField = tokenField,
@@ -374,6 +390,144 @@ fun SettingsScreen(
                 TextButton(onClick = { crashLog = null }) { Text("Close") }
             }
         )
+    }
+}
+
+@Composable
+private fun DriveBackupCard(
+    uiState: SettingsUiState,
+    viewModel: SettingsViewModel,
+    context: Context
+) {
+    val driveSignInLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            runCatching {
+                val account = GoogleSignIn.getSignedInAccountFromIntent(result.data).result
+                viewModel.onDriveSignInSuccess(account)
+            }
+        }
+    }
+
+    val timeFmt = remember { SimpleDateFormat("MMM dd, yyyy HH:mm", Locale.US) }
+
+    // Status dialogs
+    when (val status = uiState.driveBackupStatus) {
+        is DriveBackupStatus.Error -> AlertDialog(
+            onDismissRequest = viewModel::clearDriveStatus,
+            title = { Text("Backup Failed") },
+            text = { Text(status.message) },
+            confirmButton = { TextButton(onClick = viewModel::clearDriveStatus) { Text("OK") } }
+        )
+        is DriveBackupStatus.NeedsReauth -> AlertDialog(
+            onDismissRequest = viewModel::clearDriveStatus,
+            title = { Text("Re-authorization Required") },
+            text = { Text("Your Google Drive access has expired. Please disconnect and reconnect your Google account.") },
+            confirmButton = {
+                Button(onClick = { viewModel.disconnectDrive(); viewModel.clearDriveStatus() }) { Text("Disconnect") }
+            },
+            dismissButton = { TextButton(onClick = viewModel::clearDriveStatus) { Text("Cancel") } }
+        )
+        else -> {}
+    }
+
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.CloudUpload, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "Google Drive Backup",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+
+            if (uiState.driveEmail.isBlank()) {
+                Text(
+                    "Connect your Google account to automatically back up transactions, categories, savings, and reports to Google Drive every 6 hours.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Button(
+                    onClick = {
+                        val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+                            .requestEmail()
+                            .requestScopes(Scope("https://www.googleapis.com/auth/drive.file"))
+                            .build()
+                        driveSignInLauncher.launch(GoogleSignIn.getClient(context, gso).signInIntent)
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Default.Login, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Connect Google Drive")
+                }
+            } else {
+                // Connected state
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(uiState.driveEmail, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                        val lastBackupText = if (uiState.driveLastBackup > 0L)
+                            timeFmt.format(Date(uiState.driveLastBackup))
+                        else "Never"
+                        Text(
+                            "Last backup: $lastBackupText",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Icon(Icons.Default.CheckCircle, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    val isRunning = uiState.driveBackupStatus is DriveBackupStatus.Running
+                    OutlinedButton(
+                        onClick = viewModel::manualDriveBackup,
+                        enabled = !isRunning,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        if (isRunning) {
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                            Spacer(Modifier.width(6.dp))
+                            Text("Backing up…")
+                        } else {
+                            Icon(Icons.Default.Backup, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Back Up Now")
+                        }
+                    }
+                    TextButton(
+                        onClick = {
+                            GoogleSignIn.getClient(
+                                context,
+                                GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN).build()
+                            ).signOut()
+                            viewModel.disconnectDrive()
+                        }
+                    ) { Text("Disconnect", color = MaterialTheme.colorScheme.error) }
+                }
+
+                if (uiState.driveBackupStatus is DriveBackupStatus.Success) {
+                    Text(
+                        "Backup completed successfully",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+        }
     }
 }
 

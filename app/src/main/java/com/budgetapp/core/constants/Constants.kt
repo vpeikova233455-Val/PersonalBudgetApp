@@ -22,6 +22,16 @@ object Constants {
     const val AI_CONFIDENCE_THRESHOLD = 0.7
     const val MAX_AI_RETRIES = 3
 
+    // Google Drive Backup
+    const val KEY_DRIVE_ACCOUNT_EMAIL = "drive_account_email"
+    const val KEY_DRIVE_ACCOUNT_TYPE  = "drive_account_type"
+    const val KEY_DRIVE_LAST_BACKUP   = "drive_last_backup_time"
+    const val KEY_DRIVE_FOLDER_ID     = "drive_folder_id"
+    const val DRIVE_BACKUP_FOLDER     = "PersonalBudgetApp Backup"
+    const val DRIVE_BACKUP_WORK_TAG   = "drive_backup"
+    const val DRIVE_SCOPE             = "oauth2:https://www.googleapis.com/auth/drive.file"
+    const val DRIVE_BACKUP_INTERVAL_HOURS = 6L
+
     // Sync
     const val SYNC_INTERVAL_MINUTES = 15L
     const val SYNC_BATCH_SIZE = 50
