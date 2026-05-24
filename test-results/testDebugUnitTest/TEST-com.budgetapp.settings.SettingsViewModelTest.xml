@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.budgetapp.settings.SettingsViewModelTest" tests="12" skipped="0" failures="0" errors="0" timestamp="2026-05-24T05:53:58" hostname="Valentina-Peikova" time="0.56">
+  <properties/>
+  <testcase name="onDriveSignInError sets driveBackupStatus to Error" classname="com.budgetapp.settings.SettingsViewModelTest" time="0.207"/>
+  <testcase name="saveGitHubSettings persists and updates uiState" classname="com.budgetapp.settings.SettingsViewModelTest" time="0.02"/>
+  <testcase name="clearBugReportStatus resets to Idle" classname="com.budgetapp.settings.SettingsViewModelTest" time="0.022"/>
+  <testcase name="disconnectDrive clears driveEmail and resets status" classname="com.budgetapp.settings.SettingsViewModelTest" time="0.107"/>
+  <testcase name="onDriveSignInSuccess stores email and updates uiState" classname="com.budgetapp.settings.SettingsViewModelTest" time="0.021"/>
+  <testcase name="clearDriveStatus resets to Idle" classname="com.budgetapp.settings.SettingsViewModelTest" time="0.039"/>
+  <testcase name="submitBugReport with blank credentials sets Error without network call" classname="com.budgetapp.settings.SettingsViewModelTest" time="0.031"/>
+  <testcase name="manualDriveBackup sets Running then Success on success" classname="com.budgetapp.settings.SettingsViewModelTest" time="0.024"/>
+  <testcase name="manualDriveBackup is ignored when already Running" classname="com.budgetapp.settings.SettingsViewModelTest" time="0.024"/>
+  <testcase name="manualDriveBackup sets Error on failure" classname="com.budgetapp.settings.SettingsViewModelTest" time="0.022"/>
+  <testcase name="onDriveSignInSuccess with null email does nothing" classname="com.budgetapp.settings.SettingsViewModelTest" time="0.021"/>
+  <testcase name="manualDriveBackup sets NeedsReauth on reauth result" classname="com.budgetapp.settings.SettingsViewModelTest" time="0.022"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>
