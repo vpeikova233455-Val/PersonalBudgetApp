@@ -113,7 +113,7 @@ object BugReportManager {
         appendLine()
         appendLine("## Device Info")
         appendLine("```")
-        append(deviceInfo)
+        appendLine(deviceInfo)  // appendLine ensures ``` opens on its own line
         appendLine("```")
         if (screenshotUrl != null) {
             appendLine()
@@ -126,7 +126,8 @@ object BugReportManager {
         appendLine("<summary>Click to expand</summary>")
         appendLine()
         appendLine("```")
-        appendLine(logs.takeLast(8000))
+        val logContent = logs.takeLast(8000).trim()
+        appendLine(if (logContent.isNotBlank()) logContent else "_No logs captured in this session_")
         appendLine("```")
         appendLine("</details>")
     }
