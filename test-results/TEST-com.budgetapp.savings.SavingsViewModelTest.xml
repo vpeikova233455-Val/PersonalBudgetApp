@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.budgetapp.savings.SavingsViewModelTest" tests="10" skipped="0" failures="0" errors="0" timestamp="2026-05-24T05:34:41" hostname="Valentina-Peikova" time="0.075">
+  <properties/>
+  <testcase name="valueByType groups accounts correctly" classname="com.budgetapp.savings.SavingsViewModelTest" time="0.043"/>
+  <testcase name="deleteAccount delegates to repository" classname="com.budgetapp.savings.SavingsViewModelTest" time="0.004"/>
+  <testcase name="saveAccount calls updateAccount when id is non-zero" classname="com.budgetapp.savings.SavingsViewModelTest" time="0.011"/>
+  <testcase name="clearError resets error state" classname="com.budgetapp.savings.SavingsViewModelTest" time="0.002"/>
+  <testcase name="loads accounts and computes totals correctly" classname="com.budgetapp.savings.SavingsViewModelTest" time="0.002"/>
+  <testcase name="empty account list produces zero totals" classname="com.budgetapp.savings.SavingsViewModelTest" time="0.002"/>
+  <testcase name="saveAccount calls insertAccount when id is 0" classname="com.budgetapp.savings.SavingsViewModelTest" time="0.005"/>
+  <testcase name="initial state is loading" classname="com.budgetapp.savings.SavingsViewModelTest" time="0.001"/>
+  <testcase name="saveAccount trims whitespace from name and notes" classname="com.budgetapp.savings.SavingsViewModelTest" time="0.004"/>
+  <testcase name="unauthenticated user produces error state" classname="com.budgetapp.savings.SavingsViewModelTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

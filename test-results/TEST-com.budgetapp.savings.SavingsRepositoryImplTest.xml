@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.budgetapp.savings.SavingsRepositoryImplTest" tests="10" skipped="0" failures="0" errors="0" timestamp="2026-05-24T05:34:40" hostname="Valentina-Peikova" time="0.862">
+  <properties/>
+  <testcase name="getAllAccounts returns empty list when no accounts" classname="com.budgetapp.savings.SavingsRepositoryImplTest" time="0.774"/>
+  <testcase name="deleteAccount calls dao deleteById" classname="com.budgetapp.savings.SavingsRepositoryImplTest" time="0.035"/>
+  <testcase name="getAccountById returns domain model when found" classname="com.budgetapp.savings.SavingsRepositoryImplTest" time="0.031"/>
+  <testcase name="insertAccount calls dao with correct entity" classname="com.budgetapp.savings.SavingsRepositoryImplTest" time="0.013"/>
+  <testcase name="updateAccount calls dao update" classname="com.budgetapp.savings.SavingsRepositoryImplTest" time="0.003"/>
+  <testcase name="getAccountById returns null when not found" classname="com.budgetapp.savings.SavingsRepositoryImplTest" time="0.002"/>
+  <testcase name="getAllAccounts maps entities to domain models" classname="com.budgetapp.savings.SavingsRepositoryImplTest" time="0.001"/>
+  <testcase name="totalMonthlyContribution includes employer contribution" classname="com.budgetapp.savings.SavingsRepositoryImplTest" time="0.0"/>
+  <testcase name="totalMonthlyContribution works without employer contribution" classname="com.budgetapp.savings.SavingsRepositoryImplTest" time="0.0"/>
+  <testcase name="getAllAccounts preserves notes field" classname="com.budgetapp.savings.SavingsRepositoryImplTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[WARNING: A Java agent has been loaded dynamically (/Users/valentina.peikova/.gradle/caches/modules-2/files-2.1/net.bytebuddy/byte-buddy-agent/1.14.6/46e2545d7a97b6ccb195621650c5957279eb4812/byte-buddy-agent-1.14.6.jar)
+WARNING: If a serviceability tool is in use, please run with -XX:+EnableDynamicAgentLoading to hide this warning
+WARNING: If a serviceability tool is not in use, please run with -Djdk.instrument.traceUsage for more information
+WARNING: Dynamic loading of agents will be disallowed by default in a future release
+]]></system-err>
+</testsuite>
