@@ -196,6 +196,10 @@ class SettingsViewModel @Inject constructor(
         _uiState.update { it.copy(driveEmail = email) }
     }
 
+    fun onDriveSignInError(message: String) {
+        _uiState.update { it.copy(driveBackupStatus = DriveBackupStatus.Error(message)) }
+    }
+
     fun disconnectDrive() {
         EncryptionManager.saveString(context, KEY_DRIVE_ACCOUNT_EMAIL, "")
         EncryptionManager.saveString(context, KEY_DRIVE_ACCOUNT_TYPE, "")

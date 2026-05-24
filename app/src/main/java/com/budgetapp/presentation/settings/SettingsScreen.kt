@@ -402,11 +402,18 @@ private fun DriveBackupCard(
     val driveSignInLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
-        if (result.resultCode == Activity.RESULT_OK) {
-            runCatching {
-                val account = GoogleSignIn.getSignedInAccountFromIntent(result.data).result
-                viewModel.onDriveSignInSuccess(account)
+        try {
+            // getResult(ApiException) throws with a typed status code on failure
+            val account = GoogleSignIn.getSignedInAccountFromIntent(result.data)
+                .getResult(com.google.android.gms.common.api.ApiException::class.java)
+            viewModel.onDriveSignInSuccess(account)
+        } catch (e: com.google.android.gms.common.api.ApiException) {
+            if (e.statusCode != com.google.android.gms.auth.api.signin.GoogleSignInStatusCodes.SIGN_IN_CANCELLED) {
+                viewModel.onDriveSignInError("Sign-in failed (code ${e.statusCode}): ${e.message}")
             }
+            // SIGN_IN_CANCELLED means user pressed Back — no error shown
+        } catch (e: Exception) {
+            viewModel.onDriveSignInError(e.message ?: "Unknown sign-in error")
         }
     }
 
