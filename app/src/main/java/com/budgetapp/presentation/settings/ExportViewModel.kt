@@ -1,8 +1,8 @@
 package com.budgetapp.presentation.settings
 
+import android.content.ContentResolver
 import android.content.Context
-import android.content.Intent
-import androidx.core.content.FileProvider
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.budgetapp.data.export.ExportFormat
@@ -13,17 +13,13 @@ import com.budgetapp.domain.repository.TransactionRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -32,6 +28,7 @@ import javax.inject.Inject
 
 data class ExportUiState(
     val isExporting: Boolean = false,
+    val exportSuccess: Boolean = false,
     val error: String? = null
 )
 
@@ -46,12 +43,15 @@ class ExportViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(ExportUiState())
     val uiState: StateFlow<ExportUiState> = _uiState.asStateFlow()
 
-    private val _shareEvent = MutableSharedFlow<Intent>()
-    val shareEvent: SharedFlow<Intent> = _shareEvent.asSharedFlow()
+    fun suggestedFileName(format: ExportFormat): String {
+        val stamp = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+        val ext = if (format == ExportFormat.CSV) "csv" else "xlsx"
+        return "budget_export_$stamp.$ext"
+    }
 
-    fun export(format: ExportFormat, range: ExportRange) {
+    fun saveToUri(uri: Uri, contentResolver: ContentResolver, format: ExportFormat, range: ExportRange) {
         viewModelScope.launch {
-            _uiState.update { it.copy(isExporting = true, error = null) }
+            _uiState.update { it.copy(isExporting = true, error = null, exportSuccess = false) }
             try {
                 val userId = authRepository.getCurrentUserId() ?: throw Exception("Not logged in")
                 val (startDate, endDate) = dateRangeFor(range)
@@ -69,52 +69,27 @@ class ExportViewModel @Inject constructor(
                     return@launch
                 }
 
-                val (bytes, mimeType, ext) = withContext(Dispatchers.IO) {
+                val bytes = withContext(Dispatchers.IO) {
                     when (format) {
-                        ExportFormat.CSV -> Triple(
-                            exportService.exportToCsv(transactions),
-                            "text/csv",
-                            "csv"
-                        )
-                        ExportFormat.EXCEL -> Triple(
-                            exportService.exportToExcel(transactions),
-                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            "xlsx"
-                        )
+                        ExportFormat.CSV -> exportService.exportToCsv(transactions)
+                        ExportFormat.EXCEL -> exportService.exportToExcel(transactions)
                     }
                 }
 
-                val stamp = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
-                val filename = "budget_export_${stamp}.$ext"
-
-                val exportDir = File(context.cacheDir, "exports").also { it.mkdirs() }
-                val file = File(exportDir, filename)
-                withContext(Dispatchers.IO) { file.writeBytes(bytes) }
-
-                val uri = FileProvider.getUriForFile(
-                    context,
-                    "${context.packageName}.update_provider",
-                    file
-                )
-
-                val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                    type = mimeType
-                    putExtra(Intent.EXTRA_STREAM, uri)
-                    putExtra(Intent.EXTRA_SUBJECT, "Budget Export – $stamp")
-                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                withContext(Dispatchers.IO) {
+                    contentResolver.openOutputStream(uri)?.use { it.write(bytes) }
+                        ?: throw Exception("Could not open output stream for the selected file.")
                 }
 
-                _shareEvent.emit(Intent.createChooser(shareIntent, "Export ${transactions.size} transactions"))
-                _uiState.update { it.copy(isExporting = false) }
-
+                _uiState.update { it.copy(isExporting = false, exportSuccess = true) }
             } catch (e: Exception) {
                 _uiState.update { it.copy(isExporting = false, error = e.message ?: "Export failed") }
             }
         }
     }
 
-    fun clearError() {
-        _uiState.update { it.copy(error = null) }
+    fun clearStatus() {
+        _uiState.update { it.copy(exportSuccess = false, error = null) }
     }
 
     private fun dateRangeFor(range: ExportRange): Pair<Long?, Long?> {

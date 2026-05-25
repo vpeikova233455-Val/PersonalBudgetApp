@@ -1,10 +1,8 @@
 package com.budgetapp.presentation.settings
 
-import android.app.Activity
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
-import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
@@ -27,13 +25,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.budgetapp.data.export.ExportFormat
 import com.budgetapp.data.export.ExportRange
-import com.google.android.gms.auth.api.signin.GoogleSignIn
-import com.google.android.gms.auth.api.signin.GoogleSignInOptions
-import com.google.android.gms.common.api.Scope
 import java.io.File
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -51,7 +43,19 @@ fun SettingsScreen(
     var showBugReportDialog by remember { mutableStateOf(false) }
     var crashLog by remember { mutableStateOf<String?>(null) }
 
-    // Close the bug report dialog as soon as a result (success or error) arrives
+    // Holds the user's format+range selection while the file picker is open
+    var pendingFormat by remember { mutableStateOf(ExportFormat.EXCEL) }
+    var pendingRange  by remember { mutableStateOf(ExportRange.ALL) }
+
+    val saveFileLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("*/*")
+    ) { uri ->
+        if (uri != null) {
+            exportViewModel.saveToUri(uri, context.contentResolver, pendingFormat, pendingRange)
+        }
+    }
+
+    // Close the bug report dialog as soon as a result arrives
     LaunchedEffect(uiState.bugReportStatus) {
         if (uiState.bugReportStatus !is BugReportStatus.Idle &&
             uiState.bugReportStatus !is BugReportStatus.Loading
@@ -60,87 +64,86 @@ fun SettingsScreen(
         }
     }
 
-    // GitHub settings fields — initialized once when the ViewModel delivers saved values
+    // GitHub settings fields — initialized once from saved prefs
     var tokenField by rememberSaveable { mutableStateOf("") }
     var ownerField by rememberSaveable { mutableStateOf("") }
-    var repoField by rememberSaveable { mutableStateOf("") }
+    var repoField  by rememberSaveable { mutableStateOf("") }
     var githubFieldsInitialized by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(uiState.githubToken, uiState.githubOwner, uiState.githubRepo) {
         if (!githubFieldsInitialized) {
             tokenField = uiState.githubToken
             ownerField = uiState.githubOwner
-            repoField = uiState.githubRepo
+            repoField  = uiState.githubRepo
             githubFieldsInitialized = true
         }
     }
 
-    LaunchedEffect(Unit) {
-        exportViewModel.shareEvent.collect { intent ->
-            context.startActivity(intent)
-        }
-    }
-
+    // Export dialog
     if (showExportDialog) {
         ExportDialog(
             isExporting = exportState.isExporting,
-            onExport = { format, range ->
+            onSaveToFile = { format, range ->
+                pendingFormat = format
+                pendingRange  = range
                 showExportDialog = false
-                exportViewModel.export(format, range)
+                saveFileLauncher.launch(exportViewModel.suggestedFileName(format))
             },
             onDismiss = { showExportDialog = false }
         )
     }
 
+    // Bug report dialog
     if (showBugReportDialog) {
         BugReportDialog(
             isSubmitting = uiState.bugReportStatus is BugReportStatus.Loading,
-            onSubmit = { title, description ->
-                viewModel.submitBugReport(title, description)
-            },
+            onSubmit = { title, description -> viewModel.submitBugReport(title, description) },
             onDismiss = { showBugReportDialog = false }
         )
     }
 
-    // Bug report result dialogs
+    // Bug report result
     when (val status = uiState.bugReportStatus) {
-        is BugReportStatus.Success -> {
-            AlertDialog(
-                onDismissRequest = viewModel::clearBugReportStatus,
-                title = { Text("Bug Reported") },
-                text = { Text("Issue created successfully.\n\n${status.issueUrl}") },
-                confirmButton = {
-                    Button(onClick = {
-                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                        clipboard.setPrimaryClip(ClipData.newPlainText("issue_url", status.issueUrl))
-                        viewModel.clearBugReportStatus()
-                    }) { Text("Copy Link") }
-                },
-                dismissButton = {
-                    TextButton(onClick = viewModel::clearBugReportStatus) { Text("Close") }
-                }
-            )
-        }
-        is BugReportStatus.Error -> {
-            AlertDialog(
-                onDismissRequest = viewModel::clearBugReportStatus,
-                title = { Text("Failed to Report Bug") },
-                text = { Text(status.message) },
-                confirmButton = {
-                    TextButton(onClick = viewModel::clearBugReportStatus) { Text("OK") }
-                }
-            )
-        }
+        is BugReportStatus.Success -> AlertDialog(
+            onDismissRequest = viewModel::clearBugReportStatus,
+            title = { Text("Bug Reported") },
+            text = { Text("Issue created successfully.\n\n${status.issueUrl}") },
+            confirmButton = {
+                Button(onClick = {
+                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    clipboard.setPrimaryClip(ClipData.newPlainText("issue_url", status.issueUrl))
+                    viewModel.clearBugReportStatus()
+                }) { Text("Copy Link") }
+            },
+            dismissButton = {
+                TextButton(onClick = viewModel::clearBugReportStatus) { Text("Close") }
+            }
+        )
+        is BugReportStatus.Error -> AlertDialog(
+            onDismissRequest = viewModel::clearBugReportStatus,
+            title = { Text("Failed to Report Bug") },
+            text = { Text(status.message) },
+            confirmButton = {
+                TextButton(onClick = viewModel::clearBugReportStatus) { Text("OK") }
+            }
+        )
         else -> {}
     }
 
+    // Export result
+    if (exportState.exportSuccess) {
+        AlertDialog(
+            onDismissRequest = exportViewModel::clearStatus,
+            title = { Text("Export Saved") },
+            text = { Text("Your transactions have been saved successfully.") },
+            confirmButton = { TextButton(onClick = exportViewModel::clearStatus) { Text("OK") } }
+        )
+    }
     if (exportState.error != null) {
         AlertDialog(
-            onDismissRequest = exportViewModel::clearError,
-            title = { Text("Export failed") },
+            onDismissRequest = exportViewModel::clearStatus,
+            title = { Text("Export Failed") },
             text = { Text(exportState.error!!) },
-            confirmButton = {
-                TextButton(onClick = exportViewModel::clearError) { Text("OK") }
-            }
+            confirmButton = { TextButton(onClick = exportViewModel::clearStatus) { Text("OK") } }
         )
     }
 
@@ -164,50 +167,26 @@ fun SettingsScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // Profile Section
+            // Profile
             Card(modifier = Modifier.fillMaxWidth()) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp)
-                ) {
-                    Text(
-                        text = "Profile",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.primary
-                    )
+                Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+                    Text("Profile", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
                     Spacer(modifier = Modifier.height(12.dp))
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Icon(
-                            Icons.Default.Person,
-                            contentDescription = null,
-                            modifier = Modifier.size(40.dp)
-                        )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Person, contentDescription = null, modifier = Modifier.size(40.dp))
                         Spacer(modifier = Modifier.width(12.dp))
-                        Text(
-                            text = uiState.userEmail,
-                            style = MaterialTheme.typography.bodyLarge
-                        )
+                        Text(uiState.userEmail, style = MaterialTheme.typography.bodyLarge)
                     }
                 }
             }
 
-            // Sync Section
+            // Sync
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
+                    modifier = Modifier.fillMaxWidth().padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Text(
-                        text = "Sync",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.primary
-                    )
+                    Text("Sync", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -215,11 +194,7 @@ fun SettingsScreen(
                     ) {
                         Column {
                             Text("Last Sync", style = MaterialTheme.typography.bodyMedium)
-                            Text(
-                                uiState.lastSyncFormatted,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            Text(uiState.lastSyncFormatted, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         if (uiState.syncStatus.isSyncing) {
                             CircularProgressIndicator(modifier = Modifier.size(24.dp))
@@ -252,11 +227,7 @@ fun SettingsScreen(
                     modifier = Modifier.fillMaxWidth().padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Text(
-                        "Language / שפה / Язык",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.primary
-                    )
+                    Text("Language / שפה / Язык", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -270,22 +241,13 @@ fun SettingsScreen(
                             FilterChip(
                                 selected = selected,
                                 onClick = { viewModel.setLanguage(tag) },
-                                label = {
-                                    Text(
-                                        "$flag $label",
-                                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
-                                    )
-                                },
+                                label = { Text("$flag $label", fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal) },
                                 modifier = Modifier.weight(1f)
                             )
                         }
                     }
                     if (uiState.currentLanguage != "en") {
-                        Text(
-                            "The app will switch language immediately.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        Text("The app will switch language immediately.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
@@ -296,11 +258,7 @@ fun SettingsScreen(
                     modifier = Modifier.fillMaxWidth().padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text(
-                        "App Settings",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.primary
-                    )
+                    Text("App Settings", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
 
                     SettingsRow(
                         icon = Icons.Default.List,
@@ -343,21 +301,14 @@ fun SettingsScreen(
                 }
             }
 
-            // Google Drive Backup
-            DriveBackupCard(
-                uiState = uiState,
-                viewModel = viewModel,
-                context = context
-            )
-
             // GitHub Integration
             GitHubSettingsCard(
                 tokenField = tokenField,
                 ownerField = ownerField,
-                repoField = repoField,
+                repoField  = repoField,
                 onTokenChange = { tokenField = it },
                 onOwnerChange = { ownerField = it },
-                onRepoChange = { repoField = it },
+                onRepoChange  = { repoField  = it },
                 onSave = { viewModel.saveGitHubSettings(tokenField, ownerField, repoField) }
             )
 
@@ -374,9 +325,7 @@ fun SettingsScreen(
                 Text(
                     text = log.take(3000),
                     style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier
-                        .heightIn(max = 300.dp)
-                        .verticalScroll(scrollState)
+                    modifier = Modifier.heightIn(max = 300.dp).verticalScroll(scrollState)
                 )
             },
             confirmButton = {
@@ -390,151 +339,6 @@ fun SettingsScreen(
                 TextButton(onClick = { crashLog = null }) { Text("Close") }
             }
         )
-    }
-}
-
-@Composable
-private fun DriveBackupCard(
-    uiState: SettingsUiState,
-    viewModel: SettingsViewModel,
-    context: Context
-) {
-    val driveSignInLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        try {
-            // getResult(ApiException) throws with a typed status code on failure
-            val account = GoogleSignIn.getSignedInAccountFromIntent(result.data)
-                .getResult(com.google.android.gms.common.api.ApiException::class.java)
-            viewModel.onDriveSignInSuccess(account)
-        } catch (e: com.google.android.gms.common.api.ApiException) {
-            if (e.statusCode != com.google.android.gms.auth.api.signin.GoogleSignInStatusCodes.SIGN_IN_CANCELLED) {
-                viewModel.onDriveSignInError("Sign-in failed (code ${e.statusCode}): ${e.message}")
-            }
-            // SIGN_IN_CANCELLED means user pressed Back — no error shown
-        } catch (e: Exception) {
-            viewModel.onDriveSignInError(e.message ?: "Unknown sign-in error")
-        }
-    }
-
-    val timeFmt = remember { SimpleDateFormat("MMM dd, yyyy HH:mm", Locale.US) }
-
-    // Status dialogs
-    when (val status = uiState.driveBackupStatus) {
-        is DriveBackupStatus.Error -> AlertDialog(
-            onDismissRequest = viewModel::clearDriveStatus,
-            title = { Text("Backup Failed") },
-            text = { Text(status.message) },
-            confirmButton = { TextButton(onClick = viewModel::clearDriveStatus) { Text("OK") } }
-        )
-        is DriveBackupStatus.NeedsReauth -> AlertDialog(
-            onDismissRequest = viewModel::clearDriveStatus,
-            title = { Text("Re-authorization Required") },
-            text = { Text("Your Google Drive access has expired. Please disconnect and reconnect your Google account.") },
-            confirmButton = {
-                Button(onClick = { viewModel.disconnectDrive(); viewModel.clearDriveStatus() }) { Text("Disconnect") }
-            },
-            dismissButton = { TextButton(onClick = viewModel::clearDriveStatus) { Text("Cancel") } }
-        )
-        else -> {}
-    }
-
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.CloudUpload, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    "Google Drive Backup",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.primary
-                )
-            }
-
-            if (uiState.driveEmail.isBlank()) {
-                Text(
-                    "Connect your Google account to automatically back up transactions, categories, savings, and reports to Google Drive every 6 hours.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Button(
-                    onClick = {
-                        val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
-                            .requestEmail()
-                            .requestScopes(Scope("https://www.googleapis.com/auth/drive.file"))
-                            .build()
-                        driveSignInLauncher.launch(GoogleSignIn.getClient(context, gso).signInIntent)
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Icon(Icons.Default.Login, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("Connect Google Drive")
-                }
-            } else {
-                // Connected state
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column {
-                        Text(uiState.driveEmail, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                        val lastBackupText = if (uiState.driveLastBackup > 0L)
-                            timeFmt.format(Date(uiState.driveLastBackup))
-                        else "Never"
-                        Text(
-                            "Last backup: $lastBackupText",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Icon(Icons.Default.CheckCircle, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    val isRunning = uiState.driveBackupStatus is DriveBackupStatus.Running
-                    OutlinedButton(
-                        onClick = viewModel::manualDriveBackup,
-                        enabled = !isRunning,
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        if (isRunning) {
-                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                            Spacer(Modifier.width(6.dp))
-                            Text("Backing up…")
-                        } else {
-                            Icon(Icons.Default.Backup, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text("Back Up Now")
-                        }
-                    }
-                    TextButton(
-                        onClick = {
-                            GoogleSignIn.getClient(
-                                context,
-                                GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN).build()
-                            ).signOut()
-                            viewModel.disconnectDrive()
-                        }
-                    ) { Text("Disconnect", color = MaterialTheme.colorScheme.error) }
-                }
-
-                if (uiState.driveBackupStatus is DriveBackupStatus.Success) {
-                    Text(
-                        "Backup completed successfully",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-            }
-        }
     }
 }
 
@@ -556,27 +360,15 @@ private fun GitHubSettingsCard(
             modifier = Modifier.fillMaxWidth().padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Text(
-                "GitHub Integration",
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.primary
-            )
-            Text(
-                "Used to open GitHub issues when you report a bug.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            Text("GitHub Integration", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+            Text("Used to open GitHub issues when you report a bug.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
             OutlinedTextField(
                 value = tokenField,
-                onValueChange = {
-                    onTokenChange(it)
-                    saved = false
-                },
+                onValueChange = { onTokenChange(it); saved = false },
                 label = { Text("Personal Access Token") },
                 placeholder = { Text("ghp_...") },
-                visualTransformation = if (tokenVisible) VisualTransformation.None
-                                        else PasswordVisualTransformation(),
+                visualTransformation = if (tokenVisible) VisualTransformation.None else PasswordVisualTransformation(),
                 trailingIcon = {
                     IconButton(onClick = { tokenVisible = !tokenVisible }) {
                         Icon(
@@ -592,10 +384,7 @@ private fun GitHubSettingsCard(
 
             OutlinedTextField(
                 value = ownerField,
-                onValueChange = {
-                    onOwnerChange(it)
-                    saved = false
-                },
+                onValueChange = { onOwnerChange(it); saved = false },
                 label = { Text("GitHub Owner") },
                 placeholder = { Text("username or org") },
                 singleLine = true,
@@ -604,10 +393,7 @@ private fun GitHubSettingsCard(
 
             OutlinedTextField(
                 value = repoField,
-                onValueChange = {
-                    onRepoChange(it)
-                    saved = false
-                },
+                onValueChange = { onRepoChange(it); saved = false },
                 label = { Text("Repository Name") },
                 placeholder = { Text("my-repo") },
                 singleLine = true,
@@ -620,22 +406,12 @@ private fun GitHubSettingsCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 if (saved) {
-                    Text(
-                        "Saved",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.padding(end = 12.dp)
-                    )
+                    Text("Saved", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(end = 12.dp))
                 }
                 Button(
-                    onClick = {
-                        onSave()
-                        saved = true
-                    },
+                    onClick = { onSave(); saved = true },
                     enabled = tokenField.isNotBlank() || ownerField.isNotBlank() || repoField.isNotBlank()
-                ) {
-                    Text("Save")
-                }
+                ) { Text("Save") }
             }
         }
     }
@@ -681,11 +457,8 @@ private fun BugReportDialog(
                 onClick = { onSubmit(title.trim(), description.trim()) },
                 enabled = title.isNotBlank() && !isSubmitting
             ) {
-                if (isSubmitting) {
-                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-                } else {
-                    Text("Submit")
-                }
+                if (isSubmitting) CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                else Text("Submit")
             }
         },
         dismissButton = {
@@ -720,11 +493,11 @@ private fun SettingsRow(
 @Composable
 private fun ExportDialog(
     isExporting: Boolean,
-    onExport: (ExportFormat, ExportRange) -> Unit,
+    onSaveToFile: (ExportFormat, ExportRange) -> Unit,
     onDismiss: () -> Unit
 ) {
-    var selectedFormat by remember { mutableStateOf(ExportFormat.CSV) }
-    var selectedRange by remember { mutableStateOf(ExportRange.THIS_MONTH) }
+    var selectedFormat by remember { mutableStateOf(ExportFormat.EXCEL) }
+    var selectedRange  by remember { mutableStateOf(ExportRange.ALL) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -737,12 +510,7 @@ private fun ExportDialog(
                         FilterChip(
                             selected = selectedFormat == fmt,
                             onClick = { selectedFormat = fmt },
-                            label = {
-                                Text(when (fmt) {
-                                    ExportFormat.CSV -> "CSV"
-                                    ExportFormat.EXCEL -> "Excel (.xlsx)"
-                                })
-                            }
+                            label = { Text(if (fmt == ExportFormat.CSV) "CSV" else "Excel (.xlsx)") }
                         )
                     }
                 }
@@ -750,36 +518,38 @@ private fun ExportDialog(
                 Text("Period", style = MaterialTheme.typography.labelLarge)
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     ExportRange.values().forEach { rng ->
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            RadioButton(
-                                selected = selectedRange == rng,
-                                onClick = { selectedRange = rng }
-                            )
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                            RadioButton(selected = selectedRange == rng, onClick = { selectedRange = rng })
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(
                                 text = when (rng) {
-                                    ExportRange.ALL -> "All time"
-                                    ExportRange.THIS_MONTH -> "This month"
-                                    ExportRange.LAST_MONTH -> "Last month"
-                                    ExportRange.LAST_3_MONTHS -> "Last 3 months"
-                                    ExportRange.THIS_YEAR -> "This year"
+                                    ExportRange.ALL            -> "All time"
+                                    ExportRange.THIS_MONTH     -> "This month"
+                                    ExportRange.LAST_MONTH     -> "Last month"
+                                    ExportRange.LAST_3_MONTHS  -> "Last 3 months"
+                                    ExportRange.THIS_YEAR      -> "This year"
                                 },
                                 style = MaterialTheme.typography.bodyMedium
                             )
                         }
                     }
                 }
+
+                Text(
+                    "The file picker will let you save to your device or any connected storage (Google Drive, etc.).",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         },
         confirmButton = {
             Button(
-                onClick = { onExport(selectedFormat, selectedRange) },
+                onClick = { onSaveToFile(selectedFormat, selectedRange) },
                 enabled = !isExporting
             ) {
-                Text("Export")
+                Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Save to File")
             }
         },
         dismissButton = {

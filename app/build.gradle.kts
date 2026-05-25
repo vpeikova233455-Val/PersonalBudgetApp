@@ -19,11 +19,11 @@ android {
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.budgetapp"
+        applicationId = "com.vpeikova.budgetapp"
         minSdk = 26
         targetSdk = 34
-        versionCode = 35
-        versionName = "2.5.2"
+        versionCode = 37
+        versionName = "2.6.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -145,9 +145,6 @@ dependencies {
 
     // WorkManager
     implementation("androidx.work:work-runtime-ktx:2.9.0")
-
-    // Google Sign-In (for Drive OAuth)
-    implementation("com.google.android.gms:play-services-auth:21.2.0")
 
     // Security & Encryption
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
