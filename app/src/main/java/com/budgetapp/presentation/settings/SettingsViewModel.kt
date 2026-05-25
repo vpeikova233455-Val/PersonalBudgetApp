@@ -1,11 +1,21 @@
 package com.budgetapp.presentation.settings
 
 import android.content.Context
+import android.net.Uri
+import android.os.Build
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.os.LocaleListCompat
+import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.budgetapp.BuildConfig
+import com.budgetapp.core.backup.ScheduledBackupManager
+import com.budgetapp.core.constants.Constants.BACKUP_DEFAULT_INTERVAL_HOURS
+import com.budgetapp.core.constants.Constants.KEY_BACKUP_ENABLED
+import com.budgetapp.core.constants.Constants.KEY_BACKUP_FOLDER_NAME
+import com.budgetapp.core.constants.Constants.KEY_BACKUP_FOLDER_URI
+import com.budgetapp.core.constants.Constants.KEY_BACKUP_INTERVAL_HOURS
+import com.budgetapp.core.constants.Constants.KEY_BACKUP_LAST_RUN
 import com.budgetapp.core.constants.Constants.KEY_GITHUB_OWNER
 import com.budgetapp.core.constants.Constants.KEY_GITHUB_REPO
 import com.budgetapp.core.constants.Constants.KEY_GITHUB_TOKEN
@@ -20,7 +30,6 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
-import android.os.Build
 import javax.inject.Inject
 
 sealed class BugReportStatus {
@@ -41,7 +50,13 @@ data class SettingsUiState(
     val githubToken: String = "",
     val githubOwner: String = "",
     val githubRepo: String = "",
-    val bugReportStatus: BugReportStatus = BugReportStatus.Idle
+    val bugReportStatus: BugReportStatus = BugReportStatus.Idle,
+    // Scheduled backup
+    val backupEnabled: Boolean = false,
+    val backupFolderUri: String = "",
+    val backupFolderName: String = "",
+    val backupIntervalHours: Int = BACKUP_DEFAULT_INTERVAL_HOURS,
+    val backupLastRun: Long = 0L
 )
 
 @HiltViewModel
@@ -54,9 +69,16 @@ class SettingsViewModel @Inject constructor(
 
     private val _uiState = MutableStateFlow(
         SettingsUiState(
-            githubToken = EncryptionManager.getString(context, KEY_GITHUB_TOKEN) ?: "",
-            githubOwner = EncryptionManager.getString(context, KEY_GITHUB_OWNER) ?: "",
-            githubRepo  = EncryptionManager.getString(context, KEY_GITHUB_REPO)  ?: ""
+            githubToken          = EncryptionManager.getString(context, KEY_GITHUB_TOKEN) ?: "",
+            githubOwner          = EncryptionManager.getString(context, KEY_GITHUB_OWNER) ?: "",
+            githubRepo           = EncryptionManager.getString(context, KEY_GITHUB_REPO)  ?: "",
+            backupEnabled        = EncryptionManager.getBoolean(context, KEY_BACKUP_ENABLED),
+            backupFolderUri      = EncryptionManager.getString(context, KEY_BACKUP_FOLDER_URI)     ?: "",
+            backupFolderName     = EncryptionManager.getString(context, KEY_BACKUP_FOLDER_NAME)    ?: "",
+            backupIntervalHours  = EncryptionManager.getString(context, KEY_BACKUP_INTERVAL_HOURS)
+                                       ?.toIntOrNull() ?: BACKUP_DEFAULT_INTERVAL_HOURS,
+            backupLastRun        = EncryptionManager.getString(context, KEY_BACKUP_LAST_RUN)
+                                       ?.toLongOrNull() ?: 0L
         )
     )
     val uiState: StateFlow<SettingsUiState> = _uiState.asStateFlow()
@@ -69,8 +91,7 @@ class SettingsViewModel @Inject constructor(
 
     private fun loadUserInfo() {
         viewModelScope.launch {
-            val email = "user@example.com" // TODO: Get from AuthRepository
-            _uiState.update { it.copy(userEmail = email) }
+            _uiState.update { it.copy(userEmail = "user@example.com") }
         }
     }
 
@@ -125,7 +146,6 @@ class SettingsViewModel @Inject constructor(
         }
         viewModelScope.launch {
             _uiState.update { it.copy(bugReportStatus = BugReportStatus.Loading) }
-
             val body = buildString {
                 append(description.trim())
                 if (description.isNotBlank()) append("\n\n---\n")
@@ -133,24 +153,56 @@ class SettingsViewModel @Inject constructor(
                 append("**Android:** ${Build.VERSION.RELEASE}\n")
                 append("**Device:** ${Build.MANUFACTURER} ${Build.MODEL}")
             }
-
-            gitHubService.createIssue(
-                token = token, owner = owner, repo = repo,
-                title = title, body = body
-            ).fold(
-                onSuccess = { url ->
-                    _uiState.update { it.copy(bugReportStatus = BugReportStatus.Success(url)) }
-                },
-                onFailure = { e ->
-                    _uiState.update { it.copy(bugReportStatus = BugReportStatus.Error(e.message ?: "Unknown error")) }
-                }
-            )
+            gitHubService.createIssue(token = token, owner = owner, repo = repo, title = title, body = body)
+                .fold(
+                    onSuccess = { url -> _uiState.update { it.copy(bugReportStatus = BugReportStatus.Success(url)) } },
+                    onFailure = { e   -> _uiState.update { it.copy(bugReportStatus = BugReportStatus.Error(e.message ?: "Unknown error")) } }
+                )
         }
     }
 
     fun clearBugReportStatus() {
         _uiState.update { it.copy(bugReportStatus = BugReportStatus.Idle) }
     }
+
+    // ── Scheduled backup ──────────────────────────────────────────────────────
+
+    fun setBackupFolder(uri: Uri) {
+        val uriString = uri.toString()
+        val name = DocumentFile.fromTreeUri(context, uri)?.name ?: uriString
+        EncryptionManager.saveString(context, KEY_BACKUP_FOLDER_URI, uriString)
+        EncryptionManager.saveString(context, KEY_BACKUP_FOLDER_NAME, name)
+        _uiState.update { it.copy(backupFolderUri = uriString, backupFolderName = name) }
+        if (_uiState.value.backupEnabled) {
+            ScheduledBackupManager.schedule(context, _uiState.value.backupIntervalHours)
+        }
+    }
+
+    fun setBackupEnabled(enabled: Boolean) {
+        EncryptionManager.saveBoolean(context, KEY_BACKUP_ENABLED, enabled)
+        _uiState.update { it.copy(backupEnabled = enabled) }
+        val state = _uiState.value
+        if (enabled && state.backupFolderUri.isNotBlank()) {
+            ScheduledBackupManager.schedule(context, state.backupIntervalHours)
+        } else {
+            ScheduledBackupManager.cancel(context)
+        }
+    }
+
+    fun setBackupInterval(hours: Int) {
+        EncryptionManager.saveString(context, KEY_BACKUP_INTERVAL_HOURS, hours.toString())
+        _uiState.update { it.copy(backupIntervalHours = hours) }
+        if (_uiState.value.backupEnabled && _uiState.value.backupFolderUri.isNotBlank()) {
+            ScheduledBackupManager.schedule(context, hours)
+        }
+    }
+
+    fun backupNow() {
+        if (_uiState.value.backupFolderUri.isBlank()) return
+        ScheduledBackupManager.runNow(context)
+    }
+
+    // ── Auth ──────────────────────────────────────────────────────────────────
 
     fun logout() {
         viewModelScope.launch {

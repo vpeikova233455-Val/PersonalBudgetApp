@@ -3,6 +3,7 @@ package com.budgetapp.presentation.settings
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
@@ -25,7 +26,11 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.budgetapp.data.export.ExportFormat
 import com.budgetapp.data.export.ExportRange
+import com.budgetapp.core.constants.Constants.BACKUP_DEFAULT_INTERVAL_HOURS
 import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -52,6 +57,16 @@ fun SettingsScreen(
     ) { uri ->
         if (uri != null) {
             exportViewModel.saveToUri(uri, context.contentResolver, pendingFormat, pendingRange)
+        }
+    }
+
+    val folderPickerLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        if (uri != null) {
+            val takeFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            context.contentResolver.takePersistableUriPermission(uri, takeFlags)
+            viewModel.setBackupFolder(uri)
         }
     }
 
@@ -301,6 +316,15 @@ fun SettingsScreen(
                 }
             }
 
+            // Scheduled CSV Backup
+            ScheduledBackupCard(
+                uiState = uiState,
+                onToggleEnabled    = viewModel::setBackupEnabled,
+                onChooseFolder     = { folderPickerLauncher.launch(null) },
+                onIntervalChange   = viewModel::setBackupInterval,
+                onBackupNow        = viewModel::backupNow
+            )
+
             // GitHub Integration
             GitHubSettingsCard(
                 tokenField = tokenField,
@@ -486,6 +510,135 @@ private fun SettingsRow(
                 Text(label)
             }
             trailing?.invoke() ?: Icon(Icons.Default.KeyboardArrowRight, contentDescription = null)
+        }
+    }
+}
+
+@Composable
+private fun ScheduledBackupCard(
+    uiState: SettingsUiState,
+    onToggleEnabled: (Boolean) -> Unit,
+    onChooseFolder: () -> Unit,
+    onIntervalChange: (Int) -> Unit,
+    onBackupNow: () -> Unit
+) {
+    val intervalOptions = listOf(
+        12  to "Every 12 hours",
+        24  to "Every day",
+        48  to "Every 2 days",
+        72  to "Every 3 days",
+        168 to "Every week"
+    )
+    var showIntervalMenu by remember { mutableStateOf(false) }
+    val timeFmt = remember { SimpleDateFormat("MMM dd, yyyy HH:mm", Locale.US) }
+
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Schedule, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Scheduled CSV Backup", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+                }
+                Switch(checked = uiState.backupEnabled, onCheckedChange = onToggleEnabled)
+            }
+
+            Text(
+                "Automatically export all transactions to a CSV file in a folder you choose. Works with local storage or Google Drive.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            // Folder picker row
+            OutlinedButton(
+                onClick = onChooseFolder,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Default.Folder, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = if (uiState.backupFolderName.isBlank()) "Choose Backup Folder"
+                           else uiState.backupFolderName,
+                    maxLines = 1
+                )
+            }
+
+            // Interval picker
+            if (uiState.backupEnabled || uiState.backupFolderUri.isNotBlank()) {
+                val currentLabel = intervalOptions.firstOrNull { it.first == uiState.backupIntervalHours }?.second
+                    ?: "Every ${uiState.backupIntervalHours} hours"
+
+                Box {
+                    OutlinedButton(
+                        onClick = { showIntervalMenu = true },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Default.AccessTime, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(currentLabel, modifier = Modifier.weight(1f))
+                        Icon(Icons.Default.ArrowDropDown, contentDescription = null)
+                    }
+                    DropdownMenu(expanded = showIntervalMenu, onDismissRequest = { showIntervalMenu = false }) {
+                        intervalOptions.forEach { (hours, label) ->
+                            DropdownMenuItem(
+                                text = { Text(label) },
+                                onClick = {
+                                    onIntervalChange(hours)
+                                    showIntervalMenu = false
+                                },
+                                trailingIcon = if (uiState.backupIntervalHours == hours) ({
+                                    Icon(Icons.Default.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                }) else null
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Status row
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    if (uiState.backupLastRun > 0L) {
+                        Text(
+                            "Last backup: ${timeFmt.format(Date(uiState.backupLastRun))}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else if (uiState.backupEnabled) {
+                        Text(
+                            "No backup run yet",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                if (uiState.backupFolderUri.isNotBlank()) {
+                    TextButton(onClick = onBackupNow) {
+                        Icon(Icons.Default.Backup, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Back Up Now")
+                    }
+                }
+            }
+
+            if (uiState.backupEnabled && uiState.backupFolderUri.isBlank()) {
+                Text(
+                    "Choose a folder above to activate scheduled backups.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
         }
     }
 }

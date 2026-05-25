@@ -22,6 +22,15 @@ object Constants {
     const val AI_CONFIDENCE_THRESHOLD = 0.7
     const val MAX_AI_RETRIES = 3
 
+    // Scheduled CSV Backup
+    const val KEY_BACKUP_ENABLED        = "backup_enabled"
+    const val KEY_BACKUP_FOLDER_URI     = "backup_folder_uri"
+    const val KEY_BACKUP_FOLDER_NAME    = "backup_folder_name"
+    const val KEY_BACKUP_INTERVAL_HOURS = "backup_interval_hours"
+    const val KEY_BACKUP_LAST_RUN       = "backup_last_run"
+    const val BACKUP_WORK_NAME          = "scheduled_csv_backup"
+    const val BACKUP_DEFAULT_INTERVAL_HOURS = 24
+
     // Sync
     const val SYNC_INTERVAL_MINUTES = 15L
     const val SYNC_BATCH_SIZE = 50
