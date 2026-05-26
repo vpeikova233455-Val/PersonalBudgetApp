@@ -1,5 +1,6 @@
 package com.budgetapp.savings
 
+import com.budgetapp.data.local.database.dao.ChangeLogDao
 import com.budgetapp.data.local.database.dao.PensionAccountDao
 import com.budgetapp.data.local.entity.AccountType
 import com.budgetapp.data.local.entity.PensionAccountEntity
@@ -18,6 +19,7 @@ import org.junit.Test
 class SavingsRepositoryImplTest {
 
     private lateinit var dao: PensionAccountDao
+    private lateinit var changeLogDao: ChangeLogDao
     private lateinit var repo: SavingsRepositoryImpl
 
     private val userId = "user-123"
@@ -71,7 +73,8 @@ class SavingsRepositoryImplTest {
     @Before
     fun setUp() {
         dao = mockk()
-        repo = SavingsRepositoryImpl(dao)
+        changeLogDao = mockk(relaxed = true)
+        repo = SavingsRepositoryImpl(dao, changeLogDao)
     }
 
     @Test
@@ -144,6 +147,7 @@ class SavingsRepositoryImplTest {
     @Test
     fun `updateAccount calls dao update`() = runTest {
         val account = domain(id = 3L, name = "Updated Fund", value = 7500.0)
+        coEvery { dao.getPensionAccountById(3L) } returns null
         coEvery { dao.updatePensionAccount(any()) } just runs
 
         repo.updateAccount(account, userId)
@@ -157,6 +161,7 @@ class SavingsRepositoryImplTest {
 
     @Test
     fun `deleteAccount calls dao deleteById`() = runTest {
+        coEvery { dao.getPensionAccountById(2L) } returns null
         coEvery { dao.deletePensionAccountById(2L) } just runs
 
         repo.deleteAccount(2L)

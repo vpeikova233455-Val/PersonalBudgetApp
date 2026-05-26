@@ -46,6 +46,8 @@ class SettingsViewModelTest {
         mockkObject(EncryptionManager)
         every { EncryptionManager.getString(any(), any(), any()) } returns null
         every { EncryptionManager.saveString(any(), any(), any()) } just Runs
+        every { EncryptionManager.getBoolean(any(), any(), any()) } returns false
+        every { EncryptionManager.saveBoolean(any(), any(), any()) } just Runs
 
         every { syncRepository.getSyncStatus() } returns flowOf(SyncStatus())
 

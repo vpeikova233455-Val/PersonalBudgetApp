@@ -47,7 +47,7 @@ class HistoryViewModel @Inject constructor(
             HistoryFilter.CATEGORIES   -> entries.filter { it.entityType == HistoryEntityType.CATEGORY }
         }
         HistoryUiState(entries = filtered, filter = filter, isRestoring = restoring, message = message)
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), HistoryUiState())
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, HistoryUiState())
 
     fun setFilter(filter: HistoryFilter) {
         _filter.value = filter
