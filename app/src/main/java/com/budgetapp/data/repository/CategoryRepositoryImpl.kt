@@ -1,17 +1,20 @@
 package com.budgetapp.data.repository
 
 import com.budgetapp.data.local.database.dao.CategoryDao
-import com.budgetapp.data.local.entity.CategoryEntity
+import com.budgetapp.data.local.database.dao.ChangeLogDao
+import com.budgetapp.data.local.entity.*
 import com.budgetapp.data.mapper.toDomain
 import com.budgetapp.data.mapper.toEntity
 import com.budgetapp.domain.model.Category
 import com.budgetapp.domain.repository.CategoryRepository
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import org.json.JSONObject
 import javax.inject.Inject
 
 class CategoryRepositoryImpl @Inject constructor(
-    private val categoryDao: CategoryDao
+    private val categoryDao: CategoryDao,
+    private val changeLogDao: ChangeLogDao
 ) : CategoryRepository {
 
     companion object {
@@ -53,37 +56,34 @@ class CategoryRepositoryImpl @Inject constructor(
         )
     }
 
-    override fun getAllCategories(): Flow<List<Category>> {
-        return categoryDao.getAllCategories().map { entities ->
-            entities.map { it.toDomain() }
-        }
-    }
+    override fun getAllCategories(): Flow<List<Category>> =
+        categoryDao.getAllCategories().map { it.map { e -> e.toDomain() } }
 
-    override fun getBuiltInCategories(): Flow<List<Category>> {
-        return categoryDao.getBuiltInCategories().map { entities ->
-            entities.map { it.toDomain() }
-        }
-    }
+    override fun getBuiltInCategories(): Flow<List<Category>> =
+        categoryDao.getBuiltInCategories().map { it.map { e -> e.toDomain() } }
 
-    override fun getCustomCategories(userId: String): Flow<List<Category>> {
-        return categoryDao.getCustomCategories(userId).map { entities ->
-            entities.map { it.toDomain() }
-        }
-    }
+    override fun getCustomCategories(userId: String): Flow<List<Category>> =
+        categoryDao.getCustomCategories(userId).map { it.map { e -> e.toDomain() } }
 
-    override suspend fun getCategoryById(categoryId: Long): Category? {
-        return categoryDao.getCategoryById(categoryId)?.toDomain()
-    }
+    override suspend fun getCategoryById(categoryId: Long): Category? =
+        categoryDao.getCategoryById(categoryId)?.toDomain()
 
     override suspend fun insertCategory(category: Category): Long {
-        return categoryDao.insertCategory(category.toEntity())
+        val id = categoryDao.insertCategory(category.toEntity())
+        logChange(ChangeAction.CREATE, id.toString(), category.toDisplayName(), category.toEntity().copy(id = id).toSnapshot())
+        return id
     }
 
     override suspend fun updateCategory(category: Category) {
+        val oldEntity = categoryDao.getCategoryById(category.id)
         categoryDao.updateCategory(category.toEntity())
+        val snapshot = if (oldEntity != null) buildUpdateSnapshot(oldEntity.toSnapshot(), category.toEntity().toSnapshot())
+                       else category.toEntity().toSnapshot()
+        logChange(ChangeAction.UPDATE, category.id.toString(), category.toDisplayName(), snapshot)
     }
 
     override suspend fun deleteCategory(category: Category) {
+        logChange(ChangeAction.DELETE, category.id.toString(), category.toDisplayName(), category.toEntity().toSnapshot())
         categoryDao.deleteCategoryById(category.id)
     }
 
@@ -91,4 +91,25 @@ class CategoryRepositoryImpl @Inject constructor(
         if (categoryDao.getAllCategoriesSync().isNotEmpty()) return
         categoryDao.insertCategories(defaultCategories())
     }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private suspend fun logChange(action: ChangeAction, id: String, displayName: String, snapshot: String) {
+        runCatching {
+            changeLogDao.insert(
+                ChangeLogEntity(action = action.name, entityType = HistoryEntityType.CATEGORY.name,
+                    entityId = id, displayName = displayName, snapshot = snapshot)
+            )
+        }
+    }
+
+    private fun Category.toDisplayName() = "${icon} $name"
+
+    private fun CategoryEntity.toSnapshot() = JSONObject().apply {
+        put("id", id); put("name", name); put("icon", icon); put("color", color)
+        put("isCustom", isCustom); put("userId", userId)
+    }.toString()
+
+    private fun buildUpdateSnapshot(old: String, new: String) =
+        JSONObject().put("old", old).put("new", new).toString()
 }

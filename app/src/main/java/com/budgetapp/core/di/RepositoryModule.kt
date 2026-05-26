@@ -3,6 +3,7 @@ package com.budgetapp.core.di
 import com.budgetapp.data.local.database.dao.*
 import com.budgetapp.data.repository.*
 import com.budgetapp.domain.repository.*
+import com.budgetapp.data.local.database.dao.ChangeLogDao
 import com.google.firebase.auth.FirebaseAuth
 import dagger.Module
 import dagger.Provides
@@ -23,20 +24,33 @@ object RepositoryModule {
 
     @Provides
     @Singleton
+    fun provideChangeLogRepository(
+        changeLogDao: ChangeLogDao,
+        transactionDao: TransactionDao,
+        categoryDao: CategoryDao,
+        pensionAccountDao: PensionAccountDao
+    ): ChangeLogRepository {
+        return ChangeLogRepositoryImpl(changeLogDao, transactionDao, categoryDao, pensionAccountDao)
+    }
+
+    @Provides
+    @Singleton
     fun provideTransactionRepository(
         transactionDao: TransactionDao,
         categoryDao: CategoryDao,
+        changeLogDao: ChangeLogDao,
         deviceId: String
     ): TransactionRepository {
-        return TransactionRepositoryImpl(transactionDao, categoryDao, deviceId)
+        return TransactionRepositoryImpl(transactionDao, categoryDao, changeLogDao, deviceId)
     }
 
     @Provides
     @Singleton
     fun provideCategoryRepository(
-        categoryDao: CategoryDao
+        categoryDao: CategoryDao,
+        changeLogDao: ChangeLogDao
     ): CategoryRepository {
-        return CategoryRepositoryImpl(categoryDao)
+        return CategoryRepositoryImpl(categoryDao, changeLogDao)
     }
 
     @Provides
@@ -60,8 +74,9 @@ object RepositoryModule {
     @Provides
     @Singleton
     fun provideSavingsRepository(
-        pensionAccountDao: com.budgetapp.data.local.database.dao.PensionAccountDao
-    ): com.budgetapp.domain.repository.SavingsRepository {
-        return com.budgetapp.data.repository.SavingsRepositoryImpl(pensionAccountDao)
+        pensionAccountDao: PensionAccountDao,
+        changeLogDao: ChangeLogDao
+    ): SavingsRepository {
+        return SavingsRepositoryImpl(pensionAccountDao, changeLogDao)
     }
 }

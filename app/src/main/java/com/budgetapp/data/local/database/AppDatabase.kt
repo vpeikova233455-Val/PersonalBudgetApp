@@ -16,9 +16,10 @@ import com.budgetapp.data.local.entity.*
         RecurringTransactionEntity::class,
         PendingTransactionEntity::class,
         UserCategoryPreference::class,
-        PensionAccountEntity::class
+        PensionAccountEntity::class,
+        ChangeLogEntity::class
     ],
-    version = 3,
+    version = 4,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
@@ -31,6 +32,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun pendingTransactionDao(): PendingTransactionDao
     abstract fun userCategoryPreferenceDao(): UserCategoryPreferenceDao
     abstract fun pensionAccountDao(): PensionAccountDao
+    abstract fun changeLogDao(): ChangeLogDao
 
     companion object {
         const val DATABASE_NAME = "budget_app_database"
@@ -46,6 +48,22 @@ abstract class AppDatabase : RoomDatabase() {
             override fun migrate(database: SupportSQLiteDatabase) {
                 database.execSQL("ALTER TABLE pension_accounts ADD COLUMN accountType TEXT NOT NULL DEFAULT 'PENSION'")
                 database.execSQL("ALTER TABLE pension_accounts ADD COLUMN notes TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL(
+                    """CREATE TABLE IF NOT EXISTS `change_log` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `timestamp` INTEGER NOT NULL,
+                        `action` TEXT NOT NULL,
+                        `entityType` TEXT NOT NULL,
+                        `entityId` TEXT NOT NULL,
+                        `displayName` TEXT NOT NULL,
+                        `snapshot` TEXT NOT NULL
+                    )"""
+                )
             }
         }
     }

@@ -37,6 +37,7 @@ import java.util.Locale
 fun SettingsScreen(
     onNavigateBack: () -> Unit,
     onNavigateToCategories: () -> Unit,
+    onNavigateToHistory: () -> Unit = {},
     viewModel: SettingsViewModel = hiltViewModel(),
     exportViewModel: ExportViewModel = hiltViewModel()
 ) {
@@ -47,6 +48,13 @@ fun SettingsScreen(
     var showExportDialog by remember { mutableStateOf(false) }
     var showBugReportDialog by remember { mutableStateOf(false) }
     var crashLog by remember { mutableStateOf<String?>(null) }
+
+    // Restore from backup — file picker for CSV
+    val restoreFileLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) exportViewModel.restoreFromBackup(uri, context.contentResolver)
+    }
 
     // Holds the user's format+range selection while the file picker is open
     var pendingFormat by remember { mutableStateOf(ExportFormat.EXCEL) }
@@ -142,6 +150,24 @@ fun SettingsScreen(
             }
         )
         else -> {}
+    }
+
+    // Restore result
+    exportState.restoreSuccess?.let { count ->
+        AlertDialog(
+            onDismissRequest = exportViewModel::clearStatus,
+            title = { Text("Restore Complete") },
+            text = { Text("$count transaction${if (count == 1) "" else "s"} have been restored to your data.") },
+            confirmButton = { TextButton(onClick = exportViewModel::clearStatus) { Text("OK") } }
+        )
+    }
+    exportState.restoreError?.let { err ->
+        AlertDialog(
+            onDismissRequest = exportViewModel::clearStatus,
+            title = { Text("Restore Failed") },
+            text = { Text(err) },
+            confirmButton = { TextButton(onClick = exportViewModel::clearStatus) { Text("OK") } }
+        )
     }
 
     // Export result
@@ -293,6 +319,26 @@ fun SettingsScreen(
                             } else {
                                 Icon(Icons.Default.KeyboardArrowRight, contentDescription = null)
                             }
+                        }
+                    )
+
+                    HorizontalDivider()
+
+                    SettingsRow(
+                        icon = Icons.Default.History,
+                        label = "View Change History",
+                        onClick = onNavigateToHistory
+                    )
+
+                    HorizontalDivider()
+
+                    SettingsRow(
+                        icon = Icons.Default.Restore,
+                        label = if (exportState.isRestoring) "Restoring…" else "Restore from Backup",
+                        onClick = { if (!exportState.isRestoring) restoreFileLauncher.launch(arrayOf("text/csv", "text/*", "*/*")) },
+                        trailing = {
+                            if (exportState.isRestoring) CircularProgressIndicator(modifier = Modifier.size(20.dp))
+                            else Icon(Icons.Default.KeyboardArrowRight, contentDescription = null)
                         }
                     )
 
