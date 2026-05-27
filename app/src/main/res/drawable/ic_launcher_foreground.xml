@@ -10,10 +10,10 @@
         fillType="evenOdd" creates the inner counter-spaces of the letter.
     -->
     <group
-        android:scaleX="5"
-        android:scaleY="5"
-        android:translateX="-6.6"
-        android:translateY="-1">
+        android:scaleX="3.8"
+        android:scaleY="3.8"
+        android:translateX="7"
+        android:translateY="12">
         <path
             android:fillColor="#FFFFFF"
             android:fillType="evenOdd"
