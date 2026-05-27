@@ -9,6 +9,14 @@ import io.mockk.mockk
 import org.junit.Assert.*
 import org.junit.Test
 
+// isRedColor / isGreenColor are tested via reflection
+private val isRedColor = FileParserService::class.java
+    .getDeclaredMethod("isRedColor", Int::class.java, Int::class.java, Int::class.java)
+    .also { it.isAccessible = true }
+private val isGreenColor = FileParserService::class.java
+    .getDeclaredMethod("isGreenColor", Int::class.java, Int::class.java, Int::class.java)
+    .also { it.isAccessible = true }
+
 class FileParserServiceTest {
 
     private val service = FileParserService(mockk<Context>(relaxed = true))
@@ -157,6 +165,45 @@ class FileParserServiceTest {
         assertNotNull(mapping.creditColumn)
         assertEquals(2, mapping.debitColumn)
         assertEquals(3, mapping.creditColumn)
+    }
+
+    // ── Cell color helpers ─────────────────────────────────────────────────────
+
+    private fun red(r: Int, g: Int, b: Int)   = isRedColor.invoke(service, r, g, b) as Boolean
+    private fun green(r: Int, g: Int, b: Int) = isGreenColor.invoke(service, r, g, b) as Boolean
+
+    @Test
+    fun `pure red is detected as red`() {
+        assertTrue(red(255, 0, 0))
+        assertFalse(green(255, 0, 0))
+    }
+
+    @Test
+    fun `dark red is detected as red`() {
+        assertTrue(red(192, 0, 0))
+    }
+
+    @Test
+    fun `pure green is detected as green`() {
+        assertTrue(green(0, 128, 0))
+        assertFalse(red(0, 128, 0))
+    }
+
+    @Test
+    fun `Excel accent green (0,176,80) is detected as green`() {
+        assertTrue(green(0, 176, 80))
+    }
+
+    @Test
+    fun `black text is neither red nor green`() {
+        assertFalse(red(0, 0, 0))
+        assertFalse(green(0, 0, 0))
+    }
+
+    @Test
+    fun `dark navy blue is neither red nor green`() {
+        assertFalse(red(0, 0, 128))
+        assertFalse(green(0, 0, 128))
     }
 
     // ── Description-based overrides ────────────────────────────────────────────

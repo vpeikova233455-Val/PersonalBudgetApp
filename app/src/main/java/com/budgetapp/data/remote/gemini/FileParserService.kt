@@ -10,6 +10,9 @@ import org.apache.poi.ss.usermodel.Cell
 import org.apache.poi.ss.usermodel.CellType
 import org.apache.poi.ss.usermodel.DateUtil
 import org.apache.poi.ss.usermodel.WorkbookFactory
+import org.apache.poi.xssf.usermodel.XSSFCell
+import org.apache.poi.xssf.usermodel.XSSFCellStyle
+import org.apache.poi.xssf.usermodel.XSSFFont
 import java.io.InputStreamReader
 import java.text.SimpleDateFormat
 import java.util.Locale
@@ -302,8 +305,58 @@ class FileParserService @Inject constructor(
 
     private fun parseExcelRow(row: org.apache.poi.ss.usermodel.Row, mapping: ColumnMapping): ParsedTransaction? {
         val cells = (0 until row.lastCellNum).map { i -> cellText(row.getCell(i)) }
-        return parseRowData(cells, mapping)
+        val parsed = parseRowData(cells, mapping) ?: return null
+        // Color detection: red font = expense, green font = income.
+        // Re-apply description rules after color so hard overrides still win.
+        val colorType = detectTypeFromCellColors(row, mapping) ?: return parsed
+        return parsed.copy(type = overrideTypeByDescription(parsed.description, colorType))
     }
+
+    // Returns the transaction type implied by the font color of the amount cell,
+    // or null if the color is not a recognisable red or green.
+    private fun detectTypeFromCellColors(
+        row: org.apache.poi.ss.usermodel.Row,
+        mapping: ColumnMapping
+    ): TransactionType? {
+        // For separate debit/credit columns, check whichever cell has a value.
+        if (mapping.debitColumn != null && mapping.creditColumn != null) {
+            val debitCell  = row.getCell(mapping.debitColumn!!)
+            val creditCell = row.getCell(mapping.creditColumn!!)
+            val debitText  = cellText(debitCell)
+            val creditText = cellText(creditCell)
+            return when {
+                debitText.isNotBlank()  -> cellFontColorType(debitCell)
+                creditText.isNotBlank() -> cellFontColorType(creditCell)
+                else -> null
+            }
+        }
+        // Single amount or one-sided column.
+        val colIdx = mapping.amountColumn ?: mapping.debitColumn ?: mapping.creditColumn ?: return null
+        return cellFontColorType(row.getCell(colIdx))
+    }
+
+    // Reads the XLSX font color of a cell and maps it to EXPENSE (red) or INCOME (green).
+    // Returns null for HSSFCell (XLS), automatic/black text, or unrecognised colors.
+    private fun cellFontColorType(cell: Cell?): TransactionType? {
+        val xCell  = cell as? XSSFCell ?: return null
+        val xStyle = xCell.cellStyle as? XSSFCellStyle ?: return null
+        val xFont  = xStyle.font as? XSSFFont ?: return null
+        val rgb    = xFont.xssfColor?.rgb ?: return null
+        val r = rgb[0].toInt() and 0xFF
+        val g = rgb[1].toInt() and 0xFF
+        val b = rgb[2].toInt() and 0xFF
+        return when {
+            isRedColor(r, g, b)   -> TransactionType.EXPENSE
+            isGreenColor(r, g, b) -> TransactionType.INCOME
+            else -> null
+        }
+    }
+
+    // Red: red channel dominates (covers pure red, dark red, crimson, etc.)
+    private fun isRedColor(r: Int, g: Int, b: Int) = r > 150 && r > g * 2 && r > b * 2
+
+    // Green: green channel dominates (covers pure green, dark green, lime, etc.)
+    private fun isGreenColor(r: Int, g: Int, b: Int) = g > 80 && g > r * 1.5 && g > b * 1.5
 
     /** Extract a clean string from any cell type, preserving dates as yyyy-MM-dd. */
     private fun cellText(cell: Cell?): String {
