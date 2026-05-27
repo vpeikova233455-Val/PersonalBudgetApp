@@ -158,4 +158,24 @@ class FileParserServiceTest {
         assertEquals(2, mapping.debitColumn)
         assertEquals(3, mapping.creditColumn)
     }
+
+    // ── Description-based overrides ────────────────────────────────────────────
+
+    @Test
+    fun `העברה באינטרנט is always EXPENSE even when landed in credit column`() {
+        // Simulate a bank file where the column detection puts the row in credit
+        val mapping = ColumnMapping(descriptionColumn = 0, creditColumn = 1)
+        val tx = parse(listOf("העברה באינטרנט", "450.00"), mapping)
+        assertNotNull(tx)
+        assertEquals("העברה באינטרנט must always be EXPENSE", TransactionType.EXPENSE, tx!!.type)
+        assertEquals(450.0, tx.amount, 0.001)
+    }
+
+    @Test
+    fun `העברה באינטרנט in debit column stays EXPENSE`() {
+        val mapping = ColumnMapping(descriptionColumn = 0, debitColumn = 1, creditColumn = 2)
+        val tx = parse(listOf("העברה באינטרנט", "200.00", ""), mapping)
+        assertNotNull(tx)
+        assertEquals(TransactionType.EXPENSE, tx!!.type)
+    }
 }

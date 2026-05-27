@@ -234,7 +234,7 @@ class FileParserService @Inject constructor(
 
         if (desc.isBlank() || isSummaryRow(desc)) return null
 
-        return ParsedTransaction(description = desc, amount = amount, date = date, type = type, rawData = line)
+        return ParsedTransaction(description = desc, amount = amount, date = date, type = overrideTypeByDescription(desc, type), rawData = line)
     }
 
     // ── Excel ──────────────────────────────────────────────────────────────────
@@ -467,9 +467,17 @@ class FileParserService @Inject constructor(
             description = description,
             amount = amount,
             date = date,
-            type = type,
+            type = overrideTypeByDescription(description, type),
             rawData = cells.joinToString(" | ")
         )
+    }
+
+    // Applies hard-coded description overrides that take priority over column-based detection.
+    private fun overrideTypeByDescription(description: String, detected: TransactionType): TransactionType {
+        val d = description.trim()
+        if (ALWAYS_EXPENSE_DESC_PATTERNS.any { d.contains(it, ignoreCase = true) }) return TransactionType.EXPENSE
+        if (ALWAYS_INCOME_DESC_PATTERNS.any  { d.contains(it, ignoreCase = true) }) return TransactionType.INCOME
+        return detected
     }
 
     private fun isSummaryRow(text: String): Boolean {
@@ -584,6 +592,15 @@ class FileParserService @Inject constructor(
         private val BALANCE_KEYWORDS = listOf(
             "balance", "יתרה", "остаток", "баланс"
         )
+        // Description-based type overrides — applied after column detection.
+        // Use these for transaction labels that are unambiguous regardless of which column
+        // they were found in (e.g. Israeli internet-transfer descriptions that always represent
+        // outgoing payments in practice).
+        private val ALWAYS_EXPENSE_DESC_PATTERNS = listOf(
+            "העברה באינטרנט"    // internet bank transfer — always an outgoing payment
+        )
+        private val ALWAYS_INCOME_DESC_PATTERNS = listOf<String>()
+
         private val SUMMARY_KEYWORDS = listOf(
             // English
             "total", "subtotal", "grand total", "balance", "opening", "closing",
