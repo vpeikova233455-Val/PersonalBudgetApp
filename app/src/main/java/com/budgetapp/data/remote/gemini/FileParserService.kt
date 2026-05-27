@@ -412,39 +412,44 @@ class FileParserService @Inject constructor(
             ?.takeIf { it.isNotBlank() && !isSummaryRow(it) }
             ?: return null
 
-        val amountStr = when {
-            mapping.amountColumn != null -> cells.getOrNull(mapping.amountColumn!!)
-            mapping.debitColumn != null  -> cells.getOrNull(mapping.debitColumn!!)
-            mapping.creditColumn != null -> cells.getOrNull(mapping.creditColumn!!)
-            else -> return null
-        }
+        val amount: Double
+        val type: TransactionType
 
-        val rawAmount = amountStr?.trim() ?: return null
-        val amount = parseAmount(rawAmount) ?: return null
-        if (amount == 0.0) return null
-
-        val type = when {
-            mapping.amountColumn != null -> {
-                val isNegative = rawAmount.startsWith("-") ||
-                    rawAmount.contains("(") ||
-                    rawAmount.contains("debit", ignoreCase = true)
-                if (isNegative) TransactionType.EXPENSE else TransactionType.INCOME
-            }
-            mapping.debitColumn != null  -> TransactionType.EXPENSE
-            mapping.creditColumn != null -> TransactionType.INCOME
-            else -> TransactionType.EXPENSE
-        }
-
-        // If both debit and credit columns exist, determine type from which has a value
-        val finalType = if (mapping.debitColumn != null && mapping.creditColumn != null) {
-            val debit = parseAmount(cells.getOrNull(mapping.debitColumn!!) ?: "")
+        if (mapping.debitColumn != null && mapping.creditColumn != null) {
+            // Separate debit/credit columns — check both; income rows have an empty debit cell
+            val debit  = parseAmount(cells.getOrNull(mapping.debitColumn!!)  ?: "")
             val credit = parseAmount(cells.getOrNull(mapping.creditColumn!!) ?: "")
             when {
-                (debit ?: 0.0) > 0.0  -> TransactionType.EXPENSE
-                (credit ?: 0.0) > 0.0 -> TransactionType.INCOME
-                else -> type
+                (debit  ?: 0.0) > 0.0 -> { amount = debit!!;  type = TransactionType.EXPENSE }
+                (credit ?: 0.0) > 0.0 -> { amount = credit!!; type = TransactionType.INCOME  }
+                else -> return null
             }
-        } else type
+        } else {
+            // Single amount column (or only one of debit/credit present)
+            val amountStr = when {
+                mapping.amountColumn != null -> cells.getOrNull(mapping.amountColumn!!)
+                mapping.debitColumn  != null -> cells.getOrNull(mapping.debitColumn!!)
+                mapping.creditColumn != null -> cells.getOrNull(mapping.creditColumn!!)
+                else -> return null
+            }
+            val rawAmount = amountStr?.trim() ?: return null
+            amount = parseAmount(rawAmount) ?: return null
+            if (amount == 0.0) return null
+
+            type = when {
+                mapping.amountColumn != null -> {
+                    val isNegative = rawAmount.startsWith("-") ||
+                        rawAmount.contains("(") ||
+                        rawAmount.contains("debit", ignoreCase = true)
+                    if (isNegative) TransactionType.EXPENSE else TransactionType.INCOME
+                }
+                mapping.debitColumn  != null -> TransactionType.EXPENSE
+                mapping.creditColumn != null -> TransactionType.INCOME
+                else -> TransactionType.EXPENSE
+            }
+        }
+
+        if (amount == 0.0) return null
 
         val dateStr = mapping.dateColumn?.let { cells.getOrNull(it) }
         val date = parseDate(dateStr)
@@ -453,7 +458,7 @@ class FileParserService @Inject constructor(
             description = description,
             amount = amount,
             date = date,
-            type = finalType,
+            type = type,
             rawData = cells.joinToString(" | ")
         )
     }
