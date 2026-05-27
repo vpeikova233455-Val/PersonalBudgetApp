@@ -9,10 +9,6 @@ import io.mockk.mockk
 import org.junit.Assert.*
 import org.junit.Test
 
-/**
- * Tests for CSV/Excel row parsing — income (credit) and expense (debit) detection
- * when a file has separate debit/credit columns.
- */
 class FileParserServiceTest {
 
     private val service = FileParserService(mockk<Context>(relaxed = true))
@@ -21,8 +17,15 @@ class FileParserServiceTest {
         .getDeclaredMethod("parseRowData", List::class.java, ColumnMapping::class.java)
         .also { it.isAccessible = true }
 
+    private val detectColumnMapping = FileParserService::class.java
+        .getDeclaredMethod("detectColumnMapping", List::class.java)
+        .also { it.isAccessible = true }
+
     private fun parse(cells: List<String>, mapping: ColumnMapping): ParsedTransaction? =
         parseRowData.invoke(service, cells, mapping) as? ParsedTransaction
+
+    private fun detect(headers: List<String>): ColumnMapping =
+        detectColumnMapping.invoke(service, headers) as ColumnMapping
 
     // ── Separate debit / credit columns ───────────────────────────────────────
 
@@ -46,7 +49,6 @@ class FileParserServiceTest {
 
     @Test
     fun `income row is not silently dropped when debit cell is blank`() {
-        // This was the regression: debitColumn != null caused amountStr="" → null → dropped
         val mapping = ColumnMapping(descriptionColumn = 0, debitColumn = 1, creditColumn = 2)
         val tx = parse(listOf("Bank interest", "", "150.00"), mapping)
         assertNotNull("Income row must not be silently dropped", tx)
@@ -118,5 +120,42 @@ class FileParserServiceTest {
         val mapping = ColumnMapping(descriptionColumn = 0, creditColumn = 1)
         val tx = parse(listOf("Transfer in", "300.00"), mapping)
         assertNotNull(tx); assertEquals(TransactionType.INCOME, tx!!.type)
+    }
+
+    // ── Column header detection ────────────────────────────────────────────────
+
+    @Test
+    fun `Credit Balance header is detected as balance, not credit`() {
+        val mapping = detect(listOf("Date", "Description", "Debit", "Credit Balance"))
+        assertEquals("creditColumn should be null when column is a balance column",
+            null, mapping.creditColumn)
+        assertNotNull("balanceColumn should be detected", mapping.balanceColumn)
+        assertEquals(3, mapping.balanceColumn)
+    }
+
+    @Test
+    fun `Debit Balance header is detected as balance, not debit`() {
+        val mapping = detect(listOf("Date", "Memo", "Debit Balance", "Credit"))
+        assertEquals(null, mapping.debitColumn)
+        assertNotNull(mapping.balanceColumn)
+        assertNotNull(mapping.creditColumn)
+    }
+
+    @Test
+    fun `outflow header is detected as debit`() {
+        val mapping = detect(listOf("Date", "Description", "Outflow", "Inflow", "Balance"))
+        assertNotNull("outflow should map to debitColumn", mapping.debitColumn)
+        assertNotNull("inflow should map to creditColumn", mapping.creditColumn)
+        assertEquals(2, mapping.debitColumn)
+        assertEquals(3, mapping.creditColumn)
+    }
+
+    @Test
+    fun `expenses header is detected as debit`() {
+        val mapping = detect(listOf("Date", "Details", "Expenses", "Receipts"))
+        assertNotNull(mapping.debitColumn)
+        assertNotNull(mapping.creditColumn)
+        assertEquals(2, mapping.debitColumn)
+        assertEquals(3, mapping.creditColumn)
     }
 }

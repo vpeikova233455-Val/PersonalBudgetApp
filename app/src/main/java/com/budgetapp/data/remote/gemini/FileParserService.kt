@@ -383,12 +383,14 @@ class FileParserService @Inject constructor(
         headers.forEachIndexed { index, raw ->
             val h = raw.trim().lowercase()
             when {
-                DATE_KEYWORDS.any { h.contains(it) }   -> if (mapping.dateColumn == null) mapping.dateColumn = index
-                DESC_KEYWORDS.any { h.contains(it) }   -> if (mapping.descriptionColumn == null) mapping.descriptionColumn = index
-                DEBIT_KEYWORDS.any { h.contains(it) }  -> if (mapping.debitColumn == null) mapping.debitColumn = index
-                CREDIT_KEYWORDS.any { h.contains(it) } -> if (mapping.creditColumn == null) mapping.creditColumn = index
-                AMOUNT_KEYWORDS.any { h.contains(it) } -> if (mapping.amountColumn == null) mapping.amountColumn = index
-                BALANCE_KEYWORDS.any { h.contains(it) }-> if (mapping.balanceColumn == null) mapping.balanceColumn = index
+                DATE_KEYWORDS.any { h.contains(it) }    -> if (mapping.dateColumn == null) mapping.dateColumn = index
+                DESC_KEYWORDS.any { h.contains(it) }    -> if (mapping.descriptionColumn == null) mapping.descriptionColumn = index
+                // Balance must be checked before debit/credit — "credit balance" / "debit balance"
+                // are balance columns, not transaction columns.
+                BALANCE_KEYWORDS.any { h.contains(it) } -> if (mapping.balanceColumn == null) mapping.balanceColumn = index
+                DEBIT_KEYWORDS.any { h.contains(it) }   -> if (mapping.debitColumn == null) mapping.debitColumn = index
+                CREDIT_KEYWORDS.any { h.contains(it) }  -> if (mapping.creditColumn == null) mapping.creditColumn = index
+                AMOUNT_KEYWORDS.any { h.contains(it) }  -> if (mapping.amountColumn == null) mapping.amountColumn = index
             }
         }
 
@@ -412,41 +414,48 @@ class FileParserService @Inject constructor(
             ?.takeIf { it.isNotBlank() && !isSummaryRow(it) }
             ?: return null
 
+        // Evaluate every available source up front, then pick with a single priority order:
+        //   explicit debit value > explicit credit value > signed/unsigned amount column.
+        // This correctly handles all formats:
+        //   • separate debit + credit columns (most Israeli/EU bank exports)
+        //   • single signed/unsigned amount column
+        //   • only-debit or only-credit column
+        //   • amount + credit (no debit) — income rows have creditVal > 0; expense rows fall
+        //     through to the amountVal branch where sign or single-column context decides
+        val debitVal  = mapping.debitColumn?.let  { parseAmount(cells.getOrNull(it) ?: "") }
+        val creditVal = mapping.creditColumn?.let { parseAmount(cells.getOrNull(it) ?: "") }
+        val amtStr    = mapping.amountColumn?.let { cells.getOrNull(it)?.trim() }
+        val amtVal    = amtStr?.let { parseAmount(it) }
+
         val amount: Double
         val type: TransactionType
 
-        if (mapping.debitColumn != null && mapping.creditColumn != null) {
-            // Separate debit/credit columns — check both; income rows have an empty debit cell
-            val debit  = parseAmount(cells.getOrNull(mapping.debitColumn!!)  ?: "")
-            val credit = parseAmount(cells.getOrNull(mapping.creditColumn!!) ?: "")
-            when {
-                (debit  ?: 0.0) > 0.0 -> { amount = debit!!;  type = TransactionType.EXPENSE }
-                (credit ?: 0.0) > 0.0 -> { amount = credit!!; type = TransactionType.INCOME  }
-                else -> return null
+        when {
+            (debitVal ?: 0.0) > 0.0 -> {
+                amount = debitVal!!
+                type   = TransactionType.EXPENSE
             }
-        } else {
-            // Single amount column (or only one of debit/credit present)
-            val amountStr = when {
-                mapping.amountColumn != null -> cells.getOrNull(mapping.amountColumn!!)
-                mapping.debitColumn  != null -> cells.getOrNull(mapping.debitColumn!!)
-                mapping.creditColumn != null -> cells.getOrNull(mapping.creditColumn!!)
-                else -> return null
+            (creditVal ?: 0.0) > 0.0 -> {
+                amount = creditVal!!
+                type   = TransactionType.INCOME
             }
-            val rawAmount = amountStr?.trim() ?: return null
-            amount = parseAmount(rawAmount) ?: return null
-            if (amount == 0.0) return null
-
-            type = when {
-                mapping.amountColumn != null -> {
-                    val isNegative = rawAmount.startsWith("-") ||
-                        rawAmount.contains("(") ||
-                        rawAmount.contains("debit", ignoreCase = true)
-                    if (isNegative) TransactionType.EXPENSE else TransactionType.INCOME
+            (amtVal ?: 0.0) > 0.0 -> {
+                amount = amtVal!!
+                val isNegative = amtStr!!.let {
+                    it.startsWith("-") || it.contains("(") ||
+                    it.contains("debit", ignoreCase = true)
                 }
-                mapping.debitColumn  != null -> TransactionType.EXPENSE
-                mapping.creditColumn != null -> TransactionType.INCOME
-                else -> TransactionType.EXPENSE
+                // When only a credit column is mapped (no debit, no amount), any
+                // positive value is income. When only a debit column is mapped,
+                // it's an expense. When an explicit amount column is present, use sign.
+                type = when {
+                    mapping.amountColumn != null -> if (isNegative) TransactionType.EXPENSE else TransactionType.INCOME
+                    mapping.debitColumn  != null -> TransactionType.EXPENSE
+                    mapping.creditColumn != null -> TransactionType.INCOME
+                    else -> TransactionType.EXPENSE
+                }
             }
+            else -> return null
         }
 
         if (amount == 0.0) return null
@@ -540,8 +549,9 @@ class FileParserService @Inject constructor(
         private val DESC_KEYWORDS = listOf(
             // English
             "description", "details", "memo", "narrative", "payee", "merchant",
+            "transaction", "particulars",
             // Hebrew — סוג תנועה is the primary transaction-type column in Israeli bank statements
-            "סוג תנועה", "תיאור", "פרטים", "שם בית עסק", "מוטב", "הערות",
+            "סוג תנועה", "תנועה", "תיאור", "פרטים", "שם בית עסק", "מוטב", "הערות",
             // Russian
             "описание", "назначение", "контрагент", "получатель", "отправитель",
             "детали", "наименование", "комментарий"
@@ -556,7 +566,8 @@ class FileParserService @Inject constructor(
         )
         private val DEBIT_KEYWORDS = listOf(
             // English
-            "debit", "withdrawal", "charge", "payment",
+            "debit", "withdrawal", "charge", "payment", "expense", "expenses",
+            "outflow", "outgoing", "debits",
             // Hebrew — חובה is the primary debit column in Israeli bank statements
             "חובה", "חיוב", "משיכה", "הוצאה",
             // Russian
@@ -564,7 +575,7 @@ class FileParserService @Inject constructor(
         )
         private val CREDIT_KEYWORDS = listOf(
             // English
-            "credit", "deposit", "income",
+            "credit", "deposit", "income", "inflow", "incoming", "receipts", "credits",
             // Hebrew — זכות is the primary credit column in Israeli bank statements
             "זכות", "זיכוי", "הפקדה", "הכנסה",
             // Russian
