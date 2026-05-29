@@ -647,11 +647,32 @@ class FileParserService @Inject constructor(
         )
         // Description-based type overrides — applied after column detection.
         // Use these for transaction labels that are unambiguous regardless of which column
-        // they were found in (e.g. Israeli internet-transfer descriptions that always represent
-        // outgoing payments in practice).
+        // they were found in. Credit card charges from Israeli bank statements often appear
+        // in the credit column (the bank "credits" the card company), so they must be
+        // overridden to EXPENSE here.
         private val ALWAYS_EXPENSE_DESC_PATTERNS = listOf(
-            "העברה באינטרנט",   // internet bank transfer — always an outgoing payment
-            "גולדמסטר"          // Goldmaster store — always an expense
+            // Internet bank transfers — always outgoing
+            "העברה באינטרנט",
+            // Goldmaster store
+            "גולדמסטר",
+            // ── Credit / charge cards ─────────────────────────────────────────
+            // Monthly credit-card billing entries in Israeli bank statements are
+            // deducted from the checking account (= expense) but often appear in
+            // a "credit" column, so they need an explicit override.
+            "mastercard",           // Gold Mastercard, Mastercard Gold, etc.
+            "מסטרקארד",             // Hebrew transliteration of Mastercard
+            "גולד מסטרקארד",        // "Gold Mastercard" Hebrew
+            "visa",                 // Visa card charge
+            "ויזה",                 // Hebrew for Visa
+            "diners",               // Diners Club
+            "דיינרס",               // Hebrew for Diners
+            "american express",     // Amex
+            "אמריקן אקספרס",        // Hebrew for American Express
+            "amex",
+            // Generic credit-card charge labels used by Israeli banks
+            "חיוב כרטיס",           // "card charge"
+            "כרטיס אשראי",          // "credit card"
+            "חיוב אשראי"            // "credit charge"
         )
         private val ALWAYS_INCOME_DESC_PATTERNS = listOf<String>()
 

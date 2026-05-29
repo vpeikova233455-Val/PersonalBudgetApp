@@ -225,4 +225,52 @@ class FileParserServiceTest {
         assertNotNull(tx)
         assertEquals(TransactionType.EXPENSE, tx!!.type)
     }
+
+    @Test
+    fun `Gold Mastercard in credit column is EXPENSE`() {
+        val mapping = ColumnMapping(descriptionColumn = 0, creditColumn = 1)
+        val tx = parse(listOf("Gold Mastercard", "1500.00"), mapping)
+        assertNotNull(tx)
+        assertEquals("Credit card charges must always be EXPENSE", TransactionType.EXPENSE, tx!!.type)
+    }
+
+    @Test
+    fun `גולד מסטרקארד in credit column is EXPENSE`() {
+        val mapping = ColumnMapping(descriptionColumn = 0, creditColumn = 1)
+        val tx = parse(listOf("גולד מסטרקארד", "2300.00"), mapping)
+        assertNotNull(tx)
+        assertEquals(TransactionType.EXPENSE, tx!!.type)
+    }
+
+    @Test
+    fun `Visa charge in credit column is EXPENSE`() {
+        val mapping = ColumnMapping(descriptionColumn = 0, creditColumn = 1)
+        val tx = parse(listOf("Visa Classic", "800.00"), mapping)
+        assertNotNull(tx)
+        assertEquals(TransactionType.EXPENSE, tx!!.type)
+    }
+
+    @Test
+    fun `כרטיס אשראי in credit column is EXPENSE`() {
+        val mapping = ColumnMapping(descriptionColumn = 0, creditColumn = 1)
+        val tx = parse(listOf("כרטיס אשראי לאומי", "3200.00"), mapping)
+        assertNotNull(tx)
+        assertEquals(TransactionType.EXPENSE, tx!!.type)
+    }
+
+    @Test
+    fun `חיוב כרטיס in credit column is EXPENSE`() {
+        val mapping = ColumnMapping(descriptionColumn = 0, creditColumn = 1)
+        val tx = parse(listOf("חיוב כרטיס ויזה", "950.00"), mapping)
+        assertNotNull(tx)
+        assertEquals(TransactionType.EXPENSE, tx!!.type)
+    }
+
+    @Test
+    fun `Diners charge in credit column is EXPENSE`() {
+        val mapping = ColumnMapping(descriptionColumn = 0, creditColumn = 1)
+        val tx = parse(listOf("Diners Gold", "600.00"), mapping)
+        assertNotNull(tx)
+        assertEquals(TransactionType.EXPENSE, tx!!.type)
+    }
 }
