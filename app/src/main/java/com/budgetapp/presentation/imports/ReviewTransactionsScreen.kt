@@ -82,6 +82,9 @@ fun ReviewTransactionsScreen(
                             onSelectCategory = { catId, catName ->
                                 viewModel.selectCategory(pending.id, catId, catName)
                             },
+                            onCreateCategory = { name, icon ->
+                                viewModel.createCategory(pending.id, name, icon)
+                            },
                             onToggleAutomatic = { viewModel.toggleWantsAutomatic(pending.id) }
                         )
                     }
@@ -100,13 +103,14 @@ private fun PendingTransactionCard(
     onApprove: () -> Unit,
     onDelete: () -> Unit,
     onSelectCategory: (Long, String) -> Unit,
+    onCreateCategory: (name: String, icon: String) -> Unit,
     onToggleAutomatic: () -> Unit
 ) {
     var showCategoryPicker by remember { mutableStateOf(false) }
 
     if (showCategoryPicker) {
         val domainCategories = categories.map {
-            com.budgetapp.domain.model.Category(id = it.id, name = it.name, icon = "💰", color = "#607D8B")
+            com.budgetapp.domain.model.Category(id = it.id, name = it.name, icon = it.icon, color = "#607D8B")
         }
         CategoryPickerDialog(
             categories = domainCategories,
@@ -115,7 +119,11 @@ private fun PendingTransactionCard(
                 onSelectCategory(cat.id, cat.name)
                 showCategoryPicker = false
             },
-            onDismiss = { showCategoryPicker = false }
+            onDismiss = { showCategoryPicker = false },
+            onCreateCategory = { name, icon ->
+                onCreateCategory(name, icon)
+                showCategoryPicker = false
+            }
         )
     }
 

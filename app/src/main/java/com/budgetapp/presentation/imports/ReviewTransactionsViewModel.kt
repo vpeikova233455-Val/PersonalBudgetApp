@@ -5,6 +5,8 @@ import androidx.lifecycle.viewModelScope
 import com.budgetapp.data.local.database.dao.CategoryDao
 import com.budgetapp.data.local.database.dao.PendingTransactionDao
 import com.budgetapp.data.local.database.dao.TransactionDao
+import com.budgetapp.data.local.entity.CategoryEntity
+import com.budgetapp.data.local.entity.SyncStatus
 import com.budgetapp.data.local.entity.TransactionEntity
 import com.budgetapp.domain.repository.AuthRepository
 import com.budgetapp.domain.usecase.ai.LearnFromUserUseCase
@@ -88,9 +90,35 @@ class ReviewTransactionsViewModel @Inject constructor(
             categoryDao.getAllCategories()
                 .collect { categories ->
                     _uiState.update {
-                        it.copy(categories = categories.map { cat -> CategoryUiModel(id = cat.id, name = cat.name) })
+                        it.copy(categories = categories.map { cat ->
+                            CategoryUiModel(id = cat.id, name = cat.name, icon = cat.icon)
+                        })
                     }
                 }
+        }
+    }
+
+    fun createCategory(pendingId: Long, name: String, icon: String) {
+        viewModelScope.launch {
+            // Pick a color deterministically from the name so the same category always looks the same.
+            val palette = listOf(
+                "#607D8B", "#795548", "#9C27B0", "#3F51B5", "#009688",
+                "#FF5722", "#FFC107", "#4CAF50", "#2196F3", "#E91E63"
+            )
+            val color = palette[Math.abs(name.hashCode()) % palette.size]
+            val entity = CategoryEntity(
+                name = name.trim(),
+                icon = icon,
+                color = color,
+                isCustom = true,
+                userId = userId,
+                syncStatus = SyncStatus.PENDING,
+                lastModifiedTimestamp = System.currentTimeMillis()
+            )
+            val newId = categoryDao.insertCategory(entity)
+            // Auto-select the new category for this transaction so the user doesn't
+            // have to tap it again in the picker.
+            selectCategory(pendingId, newId, name.trim())
         }
     }
 
@@ -210,7 +238,8 @@ data class PendingTransactionUiModel(
 
 data class CategoryUiModel(
     val id: Long,
-    val name: String
+    val name: String,
+    val icon: String = "📋"
 )
 
 data class ReviewTransactionsUiState(
