@@ -650,7 +650,8 @@ class FileParserService @Inject constructor(
         // they were found in (e.g. Israeli internet-transfer descriptions that always represent
         // outgoing payments in practice).
         private val ALWAYS_EXPENSE_DESC_PATTERNS = listOf(
-            "העברה באינטרנט"    // internet bank transfer — always an outgoing payment
+            "העברה באינטרנט",   // internet bank transfer — always an outgoing payment
+            "גולדמסטר"          // Goldmaster store — always an expense
         )
         private val ALWAYS_INCOME_DESC_PATTERNS = listOf<String>()
 
