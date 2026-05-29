@@ -243,6 +243,15 @@ class FileParserServiceTest {
     }
 
     @Test
+    fun `גולד מאסטרקארד (aleph variant) in credit column is EXPENSE`() {
+        // This is the actual spelling used by some Israeli bank exports — note מ-א-ס vs מ-ס
+        val mapping = ColumnMapping(descriptionColumn = 0, creditColumn = 1)
+        val tx = parse(listOf("גולד מאסטרקארד", "2300.00"), mapping)
+        assertNotNull(tx)
+        assertEquals("גולד מאסטרקארד must be EXPENSE", TransactionType.EXPENSE, tx!!.type)
+    }
+
+    @Test
     fun `Visa charge in credit column is EXPENSE`() {
         val mapping = ColumnMapping(descriptionColumn = 0, creditColumn = 1)
         val tx = parse(listOf("Visa Classic", "800.00"), mapping)

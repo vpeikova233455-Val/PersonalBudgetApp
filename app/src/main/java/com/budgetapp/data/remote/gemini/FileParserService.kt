@@ -660,8 +660,10 @@ class FileParserService @Inject constructor(
             // deducted from the checking account (= expense) but often appear in
             // a "credit" column, so they need an explicit override.
             "mastercard",           // Gold Mastercard, Mastercard Gold, etc.
-            "מסטרקארד",             // Hebrew transliteration of Mastercard
-            "גולד מסטרקארד",        // "Gold Mastercard" Hebrew
+            "מסטרקארד",             // Hebrew transliteration — variant 1 (without aleph)
+            "מאסטרקארד",            // Hebrew transliteration — variant 2 (with aleph: מ-א-ס-ט-ר)
+            "גולד מסטרקארד",        // "Gold Mastercard" — variant 1
+            "גולד מאסטרקארד",       // "Gold Mastercard" — variant 2 (bank statement spelling)
             "visa",                 // Visa card charge
             "ויזה",                 // Hebrew for Visa
             "diners",               // Diners Club
