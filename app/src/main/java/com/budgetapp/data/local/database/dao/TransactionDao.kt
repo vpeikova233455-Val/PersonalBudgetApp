@@ -12,7 +12,7 @@ interface TransactionDao {
     @Query("SELECT * FROM transactions WHERE userId = :userId ORDER BY date DESC")
     fun getAllTransactions(userId: String): Flow<List<TransactionEntity>>
 
-    @Query("SELECT * FROM transactions WHERE userId = :userId AND date >= :startDate AND date <= :endDate ORDER BY date DESC")
+    @Query("SELECT * FROM transactions WHERE userId = :userId AND date >= :startDate AND date < :endDate ORDER BY date DESC")
     fun getTransactionsByDateRange(userId: String, startDate: Long, endDate: Long): Flow<List<TransactionEntity>>
 
     @Query("SELECT * FROM transactions WHERE userId = :userId AND categoryId = :categoryId ORDER BY date DESC")
@@ -27,7 +27,7 @@ interface TransactionDao {
     @Query("SELECT * FROM transactions WHERE syncStatus = :status")
     suspend fun getTransactionsBySyncStatus(status: SyncStatus): List<TransactionEntity>
 
-    @Query("SELECT SUM(amount) FROM transactions WHERE userId = :userId AND type = :type AND date >= :startDate AND date <= :endDate")
+    @Query("SELECT SUM(amount) FROM transactions WHERE userId = :userId AND type = :type AND date >= :startDate AND date < :endDate")
     fun getTotalByType(userId: String, type: TransactionType, startDate: Long, endDate: Long): Flow<Double?>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)

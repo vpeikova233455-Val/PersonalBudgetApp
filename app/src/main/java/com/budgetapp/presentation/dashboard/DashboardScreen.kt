@@ -145,7 +145,7 @@ fun DashboardScreen(
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 Text(state.message, color = MaterialTheme.colorScheme.error)
                                 Spacer(modifier = Modifier.height(16.dp))
-                                Button(onClick = viewModel::refresh) { Text("Retry") }
+                                Button(onClick = viewModel::retry) { Text("Retry") }
                             }
                         }
                     }

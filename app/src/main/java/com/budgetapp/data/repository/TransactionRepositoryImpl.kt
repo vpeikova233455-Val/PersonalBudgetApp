@@ -32,8 +32,12 @@ class TransactionRepositoryImpl @Inject constructor(
 
     override fun getTransactionsByDateRange(userId: String, startDate: Long, endDate: Long): Flow<List<Transaction>> =
         transactionDao.getTransactionsByDateRange(userId, startDate, endDate).map { entities ->
-            entities.mapNotNull { entity ->
-                categoryDao.getCategoryById(entity.categoryId)?.toDomain()?.let { entity.toDomain(it) }
+            entities.map { entity ->
+                val category = categoryDao.getCategoryById(entity.categoryId)?.toDomain()
+                    ?: com.budgetapp.domain.model.Category(
+                        id = entity.categoryId, name = "Other", icon = "📋", color = "#607D8B"
+                    )
+                entity.toDomain(category)
             }
         }
 

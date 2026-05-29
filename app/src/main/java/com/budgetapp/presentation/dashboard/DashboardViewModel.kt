@@ -9,11 +9,18 @@ import com.budgetapp.domain.repository.SyncRepository
 import com.budgetapp.domain.usecase.transaction.GetDashboardDataUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
@@ -34,6 +41,8 @@ class DashboardViewModel @Inject constructor(
     private val syncRepository: SyncRepository
 ) : ViewModel() {
 
+    private val userId: String = runBlocking { authRepository.getCurrentUserId() } ?: ""
+
     private val _uiState = MutableStateFlow<DashboardUiState>(DashboardUiState.Loading)
     val uiState: StateFlow<DashboardUiState> = _uiState.asStateFlow()
 
@@ -43,37 +52,36 @@ class DashboardViewModel @Inject constructor(
     )
     val selectedYearMonth: StateFlow<Pair<Int, Int>> = _selectedYearMonth.asStateFlow()
 
-    private var userId: String? = null
-
     init {
-        loadDashboard()
+        observeDashboard()
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)
-    fun loadDashboard() {
-        viewModelScope.launch {
-            try {
-                AppLogger.d(TAG, "Loading dashboard")
-                userId = authRepository.getCurrentUserId()
-                if (userId == null) {
-                    AppLogger.e(TAG, "No user ID available")
-                    _uiState.value = DashboardUiState.Error("User not logged in")
-                    return@launch
-                }
-                _selectedYearMonth
-                    .flatMapLatest { (year, month) ->
-                        getDashboardDataUseCase(userId!!, year, month)
+    private fun observeDashboard() {
+        if (userId.isEmpty()) {
+            _uiState.value = DashboardUiState.Error("User not logged in")
+            return
+        }
+
+        _selectedYearMonth
+            .flatMapLatest { (year, month) ->
+                getDashboardDataUseCase(userId, year, month)
+                    .map<DashboardData, DashboardUiState> { data ->
+                        val isRefreshing =
+                            (_uiState.value as? DashboardUiState.Success)?.isRefreshing ?: false
+                        DashboardUiState.Success(data, isRefreshing)
                     }
-                    .collect { dashboardData ->
-                        val currentState = _uiState.value
-                        val isRefreshing = (currentState as? DashboardUiState.Success)?.isRefreshing ?: false
-                        _uiState.value = DashboardUiState.Success(dashboardData, isRefreshing)
+                    .catch { e ->
+                        AppLogger.e(TAG, "Dashboard data error", e)
+                        emit(DashboardUiState.Error(e.message ?: "Failed to load dashboard"))
                     }
-            } catch (e: Exception) {
-                AppLogger.e(TAG, "Failed to load dashboard", e)
+            }
+            .onEach { state -> _uiState.value = state }
+            .catch { e ->
+                AppLogger.e(TAG, "Dashboard observer error", e)
                 _uiState.value = DashboardUiState.Error(e.message ?: "Failed to load dashboard")
             }
-        }
+            .launchIn(viewModelScope)
     }
 
     fun previousMonth() {
@@ -99,20 +107,29 @@ class DashboardViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 AppLogger.d(TAG, "Refreshing dashboard")
-                val currentState = _uiState.value
-                if (currentState is DashboardUiState.Success) {
-                    _uiState.value = currentState.copy(isRefreshing = true)
+                val current = _uiState.value
+                if (current is DashboardUiState.Success) {
+                    _uiState.value = current.copy(isRefreshing = true)
                 }
                 syncRepository.syncAll()
-                kotlinx.coroutines.delay(1000)
-                val newState = _uiState.value
-                if (newState is DashboardUiState.Success) {
-                    _uiState.value = newState.copy(isRefreshing = false)
+                delay(1000)
+                val updated = _uiState.value
+                if (updated is DashboardUiState.Success) {
+                    _uiState.value = updated.copy(isRefreshing = false)
                 }
-                AppLogger.d(TAG, "Dashboard refresh complete")
             } catch (e: Exception) {
                 AppLogger.e(TAG, "Dashboard refresh failed", e)
+                val updated = _uiState.value
+                if (updated is DashboardUiState.Success) {
+                    _uiState.value = updated.copy(isRefreshing = false)
+                }
             }
         }
+    }
+
+    // Called from the Error state Retry button — restarts the data observer.
+    fun retry() {
+        _uiState.value = DashboardUiState.Loading
+        observeDashboard()
     }
 }
