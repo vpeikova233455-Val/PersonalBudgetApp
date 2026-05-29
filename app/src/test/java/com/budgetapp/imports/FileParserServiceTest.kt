@@ -167,6 +167,26 @@ class FileParserServiceTest {
         assertEquals(3, mapping.creditColumn)
     }
 
+    @Test
+    fun `combined debit-credit header is detected as amountColumn`() {
+        // "זכות/חובה" contains both a credit keyword (זכות) and a debit keyword (חובה)
+        val mapping = detect(listOf("תאריך", "סוג תנועה", "זכות/חובה", "יתרה בש\"ח"))
+        assertNotNull("combined column should map to amountColumn", mapping.amountColumn)
+        assertEquals(2, mapping.amountColumn)
+        assertNull("debitColumn should be null for combined header", mapping.debitColumn)
+        assertNull("creditColumn should be null for combined header", mapping.creditColumn)
+        assertNotNull("balance column should be detected", mapping.balanceColumn)
+    }
+
+    @Test
+    fun `combined debit-credit header in English is detected as amountColumn`() {
+        val mapping = detect(listOf("Date", "Description", "Debit/Credit", "Balance"))
+        assertNotNull(mapping.amountColumn)
+        assertEquals(2, mapping.amountColumn)
+        assertNull(mapping.debitColumn)
+        assertNull(mapping.creditColumn)
+    }
+
     // ── Cell color helpers ─────────────────────────────────────────────────────
 
     private fun red(r: Int, g: Int, b: Int)   = isRedColor.invoke(service, r, g, b) as Boolean

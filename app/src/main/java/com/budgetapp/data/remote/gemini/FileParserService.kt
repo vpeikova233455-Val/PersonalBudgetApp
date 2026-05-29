@@ -332,24 +332,55 @@ class FileParserService @Inject constructor(
         }
         // Single amount or one-sided column.
         val colIdx = mapping.amountColumn ?: mapping.debitColumn ?: mapping.creditColumn ?: return null
-        return cellFontColorType(row.getCell(colIdx))
+        val cell = row.getCell(colIdx)
+        val fromColor = cellFontColorType(cell)
+        if (fromColor != null) return fromColor
+        // For combined debit/credit columns: if color detection failed, use numeric sign
+        // (negative value = expense, positive = income). Doesn't apply to single-sided columns
+        // because there sign has no meaning — debit-only is always expense, credit-only is income.
+        if (mapping.amountColumn != null && mapping.debitColumn == null && mapping.creditColumn == null) {
+            val v = try { (cell as? XSSFCell)?.numericCellValue } catch (_: Exception) { null }
+            if (v != null && v != 0.0) return if (v < 0) TransactionType.EXPENSE else TransactionType.INCOME
+        }
+        return null
     }
 
-    // Reads the XLSX font color of a cell and maps it to EXPENSE (red) or INCOME (green).
+    // Reads the XLSX font color (then fill color) of a cell and maps it to
+    // EXPENSE (red) or INCOME (green). Tries direct RGB first, then ARGB hex
+    // (needed for some theme-based colors), then cell fill foreground.
     // Returns null for HSSFCell (XLS), automatic/black text, or unrecognised colors.
     private fun cellFontColorType(cell: Cell?): TransactionType? {
         val xCell  = cell as? XSSFCell ?: return null
         val xStyle = xCell.cellStyle as? XSSFCellStyle ?: return null
-        val xFont  = xStyle.font as? XSSFFont ?: return null
-        val rgb    = xFont.xssfColor?.rgb ?: return null
-        val r = rgb[0].toInt() and 0xFF
-        val g = rgb[1].toInt() and 0xFF
-        val b = rgb[2].toInt() and 0xFF
-        return when {
-            isRedColor(r, g, b)   -> TransactionType.EXPENSE
-            isGreenColor(r, g, b) -> TransactionType.INCOME
-            else -> null
+
+        // 1. Font color — direct RGB (3 bytes), then ARGB (4 bytes: alpha,R,G,B)
+        val xFont = xStyle.font as? XSSFFont
+        val fontColor = xFont?.xssfColor
+        if (fontColor != null) {
+            val rgb = fontColor.rgb ?: fontColor.argb?.let { if (it.size >= 4) it.copyOfRange(1, 4) else null }
+            if (rgb != null) {
+                val r = rgb[0].toInt() and 0xFF
+                val g = rgb[1].toInt() and 0xFF
+                val b = rgb[2].toInt() and 0xFF
+                if (isRedColor(r, g, b))   return TransactionType.EXPENSE
+                if (isGreenColor(r, g, b)) return TransactionType.INCOME
+            }
         }
+
+        // 2. Cell fill foreground color — some formats color the cell background instead of font
+        val fillColor = xStyle.fillForegroundXSSFColor
+        if (fillColor != null) {
+            val rgb = fillColor.rgb ?: fillColor.argb?.let { if (it.size >= 4) it.copyOfRange(1, 4) else null }
+            if (rgb != null) {
+                val r = rgb[0].toInt() and 0xFF
+                val g = rgb[1].toInt() and 0xFF
+                val b = rgb[2].toInt() and 0xFF
+                if (isRedColor(r, g, b))   return TransactionType.EXPENSE
+                if (isGreenColor(r, g, b)) return TransactionType.INCOME
+            }
+        }
+
+        return null
     }
 
     // Red: red channel dominates (covers pure red, dark red, crimson, etc.)
@@ -441,6 +472,10 @@ class FileParserService @Inject constructor(
                 // Balance must be checked before debit/credit — "credit balance" / "debit balance"
                 // are balance columns, not transaction columns.
                 BALANCE_KEYWORDS.any { h.contains(it) } -> if (mapping.balanceColumn == null) mapping.balanceColumn = index
+                // Combined debit+credit header (e.g. "זכות/חובה") — treat as a single
+                // amount column; type is determined by font/fill color or sign.
+                DEBIT_KEYWORDS.any { h.contains(it) } && CREDIT_KEYWORDS.any { h.contains(it) } ->
+                    if (mapping.amountColumn == null) mapping.amountColumn = index
                 DEBIT_KEYWORDS.any { h.contains(it) }   -> if (mapping.debitColumn == null) mapping.debitColumn = index
                 CREDIT_KEYWORDS.any { h.contains(it) }  -> if (mapping.creditColumn == null) mapping.creditColumn = index
                 AMOUNT_KEYWORDS.any { h.contains(it) }  -> if (mapping.amountColumn == null) mapping.amountColumn = index
