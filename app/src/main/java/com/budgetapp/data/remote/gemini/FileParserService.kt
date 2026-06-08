@@ -307,9 +307,13 @@ class FileParserService @Inject constructor(
         val cells = (0 until row.lastCellNum).map { i -> cellText(row.getCell(i)) }
         val parsed = parseRowData(cells, mapping) ?: return null
         // Color detection: red font = expense, green font = income.
-        // Re-apply description rules after color so hard overrides still win.
+        // For combined debit/credit columns the sign is the source of truth —
+        // description overrides are intentionally skipped so a correctly-signed
+        // value is never flipped to the wrong type.
         val colorType = detectTypeFromCellColors(row, mapping) ?: return parsed
-        return parsed.copy(type = overrideTypeByDescription(parsed.description, colorType))
+        val type = if (mapping.isCombinedAmountColumn) colorType
+                   else overrideTypeByDescription(parsed.description, colorType)
+        return parsed.copy(type = type)
     }
 
     // Returns the transaction type implied by the font color of the amount cell,
@@ -473,9 +477,15 @@ class FileParserService @Inject constructor(
                 // are balance columns, not transaction columns.
                 BALANCE_KEYWORDS.any { h.contains(it) } -> if (mapping.balanceColumn == null) mapping.balanceColumn = index
                 // Combined debit+credit header (e.g. "זכות/חובה") — treat as a single
-                // amount column; type is determined by font/fill color or sign.
-                DEBIT_KEYWORDS.any { h.contains(it) } && CREDIT_KEYWORDS.any { h.contains(it) } ->
-                    if (mapping.amountColumn == null) mapping.amountColumn = index
+                // signed amount column; type is determined by sign (negative = expense,
+                // positive = income) and optionally confirmed by font/fill color.
+                // Description-based overrides are NOT applied for this column type.
+                DEBIT_KEYWORDS.any { h.contains(it) } && CREDIT_KEYWORDS.any { h.contains(it) } -> {
+                    if (mapping.amountColumn == null) {
+                        mapping.amountColumn = index
+                        mapping.isCombinedAmountColumn = true
+                    }
+                }
                 DEBIT_KEYWORDS.any { h.contains(it) }   -> if (mapping.debitColumn == null) mapping.debitColumn = index
                 CREDIT_KEYWORDS.any { h.contains(it) }  -> if (mapping.creditColumn == null) mapping.creditColumn = index
                 AMOUNT_KEYWORDS.any { h.contains(it) }  -> if (mapping.amountColumn == null) mapping.amountColumn = index
@@ -529,9 +539,12 @@ class FileParserService @Inject constructor(
             }
             (amtVal ?: 0.0) > 0.0 -> {
                 amount = amtVal!!
-                val isNegative = amtStr!!.let {
-                    it.startsWith("-") || it.contains("(") ||
-                    it.contains("debit", ignoreCase = true)
+                val isNegative = amtStr!!.let { s ->
+                    val t = s.trim()
+                    // Leading minus, trailing minus (e.g. "1500-" used by some Israeli banks),
+                    // or accounting parenthesis notation (1,500.00)
+                    t.startsWith("-") || (t.endsWith("-") && t.length > 1) || t.contains("(") ||
+                    t.contains("debit", ignoreCase = true)
                 }
                 // When only a credit column is mapped (no debit, no amount), any
                 // positive value is income. When only a debit column is mapped,
@@ -555,7 +568,13 @@ class FileParserService @Inject constructor(
             description = description,
             amount = amount,
             date = date,
-            type = overrideTypeByDescription(description, type),
+            // For combined debit/credit columns the numeric sign is authoritative —
+            // skip description overrides so a correctly-signed transaction is never
+            // reclassified. Description overrides remain active for separate
+            // debit/credit column formats where credit card charges appear in the
+            // "credit" column and would otherwise be classified as income.
+            type = if (mapping.isCombinedAmountColumn) type
+                   else overrideTypeByDescription(description, type),
             rawData = cells.joinToString(" | ")
         )
     }
@@ -578,9 +597,13 @@ class FileParserService @Inject constructor(
     private fun parseAmount(raw: String): Double? {
         if (raw.isBlank()) return null
         return try {
-            // Handle accounting notation like (1,234.56) = negative
-            val s = raw
-                .replace("(", "-").replace(")", "")
+            var s = raw.trim()
+            // Trailing minus sign — common in Hebrew/Israeli financial exports:
+            // "1,500.00-" means -1,500.00.  Must be checked before stripping non-numeric
+            // chars so the sign information isn't lost.
+            if (s.length > 1 && s.endsWith("-") && s[0].isDigit()) s = "-${s.dropLast(1)}"
+            // Accounting notation (1,234.56) = negative
+            s = s.replace("(", "-").replace(")", "")
                 .replace(Regex("[^0-9.\\-]"), "")
                 .trim()
             if (s.isEmpty() || s == "-") null
@@ -695,8 +718,10 @@ class FileParserService @Inject constructor(
             // deducted from the checking account (= expense) but often appear in
             // a "credit" column, so they need an explicit override.
             "mastercard",           // Gold Mastercard, Mastercard Gold, etc.
-            "מסטרקארד",             // Hebrew transliteration — variant 1 (without aleph)
-            "מאסטרקארד",            // Hebrew transliteration — variant 2 (with aleph: מ-א-ס-ט-ר)
+            "מסטרקרד",              // Hebrew transliteration — short variant (גולד מסטרקרד)
+            "מסטרקארד",             // Hebrew transliteration — variant with aleph before ד
+            "מאסטרקארד",            // Hebrew transliteration — variant with aleph after מ
+            "גולד מסטרקרד",         // "Gold Mastercard" — short variant
             "גולד מסטרקארד",        // "Gold Mastercard" — variant 1
             "גולד מאסטרקארד",       // "Gold Mastercard" — variant 2 (bank statement spelling)
             "visa",                 // Visa card charge
@@ -732,7 +757,11 @@ data class ColumnMapping(
     var amountColumn: Int? = null,
     var debitColumn: Int? = null,
     var creditColumn: Int? = null,
-    var balanceColumn: Int? = null
+    var balanceColumn: Int? = null,
+    // True when amountColumn was detected from a combined debit+credit header
+    // (e.g. "זכות/חובה"). In this case the numeric sign is the source of truth
+    // for expense/income classification; description-based overrides are skipped.
+    var isCombinedAmountColumn: Boolean = false
 ) {
     fun hasEnoughColumns() =
         descriptionColumn != null &&

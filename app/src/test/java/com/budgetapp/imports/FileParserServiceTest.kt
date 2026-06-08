@@ -168,7 +168,7 @@ class FileParserServiceTest {
     }
 
     @Test
-    fun `combined debit-credit header is detected as amountColumn`() {
+    fun `combined debit-credit header is detected as amountColumn and flagged`() {
         // "זכות/חובה" contains both a credit keyword (זכות) and a debit keyword (חובה)
         val mapping = detect(listOf("תאריך", "סוג תנועה", "זכות/חובה", "יתרה בש\"ח"))
         assertNotNull("combined column should map to amountColumn", mapping.amountColumn)
@@ -176,15 +176,75 @@ class FileParserServiceTest {
         assertNull("debitColumn should be null for combined header", mapping.debitColumn)
         assertNull("creditColumn should be null for combined header", mapping.creditColumn)
         assertNotNull("balance column should be detected", mapping.balanceColumn)
+        assertTrue("isCombinedAmountColumn must be true", mapping.isCombinedAmountColumn)
     }
 
     @Test
-    fun `combined debit-credit header in English is detected as amountColumn`() {
+    fun `combined debit-credit header in English is detected as amountColumn and flagged`() {
         val mapping = detect(listOf("Date", "Description", "Debit/Credit", "Balance"))
         assertNotNull(mapping.amountColumn)
         assertEquals(2, mapping.amountColumn)
         assertNull(mapping.debitColumn)
         assertNull(mapping.creditColumn)
+        assertTrue(mapping.isCombinedAmountColumn)
+    }
+
+    @Test
+    fun `single debit column is NOT flagged as combined`() {
+        val mapping = detect(listOf("Date", "Description", "Debit", "Credit"))
+        assertFalse("separate debit column must not set isCombinedAmountColumn", mapping.isCombinedAmountColumn)
+    }
+
+    // ── Combined column: sign is source of truth, description overrides skipped ──
+
+    @Test
+    fun `negative amount in combined column is EXPENSE even for credit-card description`() {
+        // Israeli bank format: זכות/חובה is a signed combined column.
+        // A negative amount must stay EXPENSE regardless of description patterns.
+        val mapping = ColumnMapping(descriptionColumn = 0, amountColumn = 1, isCombinedAmountColumn = true)
+        val tx = parse(listOf("גולד מסטרקרד", "-1500"), mapping)
+        assertNotNull(tx)
+        assertEquals("negative amount in combined column must be EXPENSE", TransactionType.EXPENSE, tx!!.type)
+        assertEquals(1500.0, tx.amount, 0.001)
+    }
+
+    @Test
+    fun `positive amount in combined column is INCOME even for credit-card description`() {
+        // A refund from the credit-card company would appear as a positive entry in זכות/חובה.
+        // Sign wins — it must be classified as INCOME.
+        val mapping = ColumnMapping(descriptionColumn = 0, amountColumn = 1, isCombinedAmountColumn = true)
+        val tx = parse(listOf("גולד מסטרקרד", "150"), mapping)
+        assertNotNull(tx)
+        assertEquals("positive amount in combined column must be INCOME", TransactionType.INCOME, tx!!.type)
+    }
+
+    @Test
+    fun `trailing minus amount is EXPENSE`() {
+        val mapping = ColumnMapping(descriptionColumn = 0, amountColumn = 1, isCombinedAmountColumn = true)
+        val tx = parse(listOf("קניות", "1500-"), mapping)
+        assertNotNull("trailing-minus row must not be dropped", tx)
+        assertEquals(TransactionType.EXPENSE, tx!!.type)
+        assertEquals(1500.0, tx.amount, 0.001)
+    }
+
+    @Test
+    fun `trailing minus with comma-thousands is EXPENSE`() {
+        val mapping = ColumnMapping(descriptionColumn = 0, amountColumn = 1, isCombinedAmountColumn = true)
+        val tx = parse(listOf("חשמל", "1,234.56-"), mapping)
+        assertNotNull(tx)
+        assertEquals(TransactionType.EXPENSE, tx!!.type)
+        assertEquals(1234.56, tx.amount, 0.01)
+    }
+
+    // ── גולד מסטרקרד short spelling (no aleph) ───────────────────────────────────
+
+    @Test
+    fun `גולד מסטרקרד short spelling in credit column is EXPENSE`() {
+        // Non-combined format: credit column, description override must catch this variant
+        val mapping = ColumnMapping(descriptionColumn = 0, creditColumn = 1)
+        val tx = parse(listOf("גולד מסטרקרד", "1500"), mapping)
+        assertNotNull(tx)
+        assertEquals("גולד מסטרקרד must be EXPENSE via description override", TransactionType.EXPENSE, tx!!.type)
     }
 
     // ── Cell color helpers ─────────────────────────────────────────────────────
