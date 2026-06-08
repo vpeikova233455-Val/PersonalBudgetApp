@@ -1,5 +1,6 @@
 package com.budgetapp.data.local.entity
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 
@@ -12,5 +13,6 @@ data class CategoryEntity(
     val isCustom: Boolean = false,
     val userId: String? = null,
     val syncStatus: SyncStatus = SyncStatus.PENDING,
-    val lastModifiedTimestamp: Long = System.currentTimeMillis()
+    val lastModifiedTimestamp: Long = System.currentTimeMillis(),
+    @ColumnInfo(name = "display_order") val displayOrder: Int = 0
 )

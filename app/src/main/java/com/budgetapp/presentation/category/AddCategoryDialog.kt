@@ -7,162 +7,172 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.budgetapp.domain.model.Category
 
 @Composable
-fun AddCategoryDialog(
-    onDismiss: () -> Unit,
-    viewModel: CategoryViewModel
+fun EditCategoryDialog(
+    editingCategory: Category?,
+    onDismiss:       () -> Unit,
+    onSave:          (name: String, icon: String, color: String) -> Unit
 ) {
-    val formState by viewModel.formState.collectAsState()
+    val isEditing = editingCategory != null
 
-    LaunchedEffect(formState.isSaved) {
-        if (formState.isSaved) {
-            onDismiss()
-        }
+    var name  by remember { mutableStateOf(editingCategory?.name  ?: "") }
+    var icon  by remember { mutableStateOf(editingCategory?.icon  ?: "") }
+    var color by remember { mutableStateOf(editingCategory?.color ?: "") }
+
+    var nameError  by remember { mutableStateOf<String?>(null) }
+    var iconError  by remember { mutableStateOf<String?>(null) }
+    var colorError by remember { mutableStateOf<String?>(null) }
+
+    fun validate(): Boolean {
+        nameError  = if (name.isBlank())  "Required" else null
+        iconError  = if (icon.isBlank())  "Select an icon" else null
+        colorError = if (color.isBlank()) "Select a color" else null
+        return nameError == null && iconError == null && colorError == null
     }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Add Custom Category") },
+        title = { Text(if (isEditing) "Edit Category" else "New Category") },
         text = {
             Column(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                // Name
+                // Preview chip
+                if (icon.isNotBlank() || color.isNotBlank()) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(44.dp)
+                                .clip(CircleShape)
+                                .background(if (color.isNotBlank()) parseHexColor(color) else Color.Gray),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (icon.isNotBlank()) Text(icon, fontSize = 20.sp)
+                        }
+                        if (name.isNotBlank()) {
+                            Spacer(Modifier.width(10.dp))
+                            Text(name, style = MaterialTheme.typography.bodyLarge)
+                        }
+                    }
+                }
+
+                // Name field
                 OutlinedTextField(
-                    value = formState.name,
-                    onValueChange = viewModel::onNameChange,
-                    label = { Text("Category Name") },
-                    isError = formState.nameError != null,
-                    supportingText = formState.nameError?.let { { Text(it) } },
+                    value = name,
+                    onValueChange = { name = it; nameError = null },
+                    label = { Text("Category name") },
+                    isError = nameError != null,
+                    supportingText = nameError?.let { { Text(it) } },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
 
-                // Icon Picker
-                Text(
-                    text = "Select Icon",
-                    style = MaterialTheme.typography.labelLarge
-                )
-                IconPicker(
-                    selectedIcon = formState.icon,
-                    onIconSelect = viewModel::onIconChange
-                )
-                if (formState.iconError != null) {
-                    Text(
-                        text = formState.iconError!!,
-                        color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.bodySmall
-                    )
+                // Icon picker
+                Text("Icon", style = MaterialTheme.typography.labelLarge)
+                IconPicker(selectedIcon = icon, onIconSelect = { icon = it; iconError = null })
+                if (iconError != null) {
+                    Text(iconError!!, color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall)
                 }
 
-                // Color Picker
-                Text(
-                    text = "Select Color",
-                    style = MaterialTheme.typography.labelLarge
-                )
-                ColorPicker(
-                    selectedColor = formState.color,
-                    onColorSelect = viewModel::onColorChange
-                )
-                if (formState.colorError != null) {
-                    Text(
-                        text = formState.colorError!!,
-                        color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                }
-
-                if (formState.error != null) {
-                    Text(
-                        text = formState.error!!,
-                        color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.bodySmall
-                    )
+                // Color picker
+                Text("Color", style = MaterialTheme.typography.labelLarge)
+                ColorPicker(selectedColor = color, onColorSelect = { color = it; colorError = null })
+                if (colorError != null) {
+                    Text(colorError!!, color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall)
                 }
             }
         },
         confirmButton = {
-            Button(
-                onClick = viewModel::saveCategory,
-                enabled = !formState.isLoading
-            ) {
-                if (formState.isLoading) {
-                    CircularProgressIndicator(modifier = Modifier.size(20.dp))
-                } else {
-                    Text("Save")
-                }
+            Button(onClick = { if (validate()) onSave(name, icon, color) }) {
+                Text("Save")
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
-            }
+            TextButton(onClick = onDismiss) { Text("Cancel") }
         }
     )
 }
 
+// ── Icon picker ───────────────────────────────────────────────────────────────
+
 @Composable
-fun IconPicker(
-    selectedIcon: String,
-    onIconSelect: (String) -> Unit
-) {
+fun IconPicker(selectedIcon: String, onIconSelect: (String) -> Unit) {
     val icons = listOf(
-        "💰", "💼", "📈", "🏠", "🍽️", "🚗", "🛍️", "🎬",
-        "⚕️", "💡", "🛡️", "📚", "💎", "📋", "🎮", "✈️",
-        "🏋️", "🎨", "🐕", "☕", "🍺", "🎵", "📱", "💻"
+        // Finance
+        "💰", "💳", "💵", "💴", "💸", "🏦", "📈", "📉", "🪙", "💎",
+        // Home & living
+        "🏠", "🏘️", "🏗️", "🛋️", "🔌", "⚡", "💧", "🔥", "🗑️", "🛁",
+        // Food & drink
+        "🍽️", "🍕", "🍔", "🥗", "☕", "🍺", "🧃", "🛒", "🧺", "🍞",
+        // Transport
+        "🚗", "🚌", "✈️", "🚂", "🚲", "🛵", "⛽", "🅿️", "🚕", "🚐",
+        // Health & wellness
+        "⚕️", "💊", "🏥", "🧪", "🏃", "🏋️", "🧘", "🩺", "💆", "🦷",
+        // Education & work
+        "📚", "🏫", "💼", "🖥️", "📱", "🖨️", "📝", "🎓", "🔬", "📐",
+        // Entertainment & leisure
+        "🎬", "🎵", "🎮", "🎨", "🎭", "📷", "🎙️", "🎲", "🏖️", "🏕️",
+        // Shopping
+        "🛍️", "👗", "👟", "💄", "💍", "🧴", "🪒", "🕶️", "🧢", "👜",
+        // People & family
+        "👶", "🧒", "👦", "👧", "👨", "👩", "👴", "👵", "👨‍👩‍👧", "🐕",
+        // Misc
+        "🎁", "🌱", "🌍", "🏛️", "🛡️", "📋", "⭐", "🔧", "🧸", "🎀"
     )
 
     LazyVerticalGrid(
-        columns = GridCells.Fixed(6),
-        modifier = Modifier.height(120.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+        columns = GridCells.Fixed(8),
+        modifier = Modifier.height(200.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalArrangement   = Arrangement.spacedBy(6.dp)
     ) {
-        items(icons) { icon ->
+        items(icons) { ico ->
+            val selected = ico == selectedIcon
             Box(
                 modifier = Modifier
-                    .size(40.dp)
+                    .size(36.dp)
                     .background(
-                        color = if (icon == selectedIcon)
-                            MaterialTheme.colorScheme.primaryContainer
-                        else
-                            MaterialTheme.colorScheme.surface,
-                        shape = CircleShape
+                        if (selected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
+                        CircleShape
                     )
                     .border(
-                        width = if (icon == selectedIcon) 2.dp else 1.dp,
-                        color = if (icon == selectedIcon)
-                            MaterialTheme.colorScheme.primary
-                        else
-                            MaterialTheme.colorScheme.outline,
-                        shape = CircleShape
+                        width  = if (selected) 2.dp else 1.dp,
+                        color  = if (selected) MaterialTheme.colorScheme.primary
+                                 else MaterialTheme.colorScheme.outline.copy(alpha = 0.4f),
+                        shape  = CircleShape
                     )
-                    .clickable { onIconSelect(icon) },
+                    .clickable { onIconSelect(ico) },
                 contentAlignment = Alignment.Center
             ) {
-                Text(
-                    text = icon,
-                    style = MaterialTheme.typography.titleMedium
-                )
+                Text(ico, fontSize = 16.sp)
             }
         }
     }
 }
 
+// ── Color picker ──────────────────────────────────────────────────────────────
+
 @Composable
-fun ColorPicker(
-    selectedColor: String,
-    onColorSelect: (String) -> Unit
-) {
+fun ColorPicker(selectedColor: String, onColorSelect: (String) -> Unit) {
     val colors = listOf(
         "#F44336", "#E91E63", "#9C27B0", "#673AB7",
         "#3F51B5", "#2196F3", "#03A9F4", "#00BCD4",
@@ -173,24 +183,22 @@ fun ColorPicker(
 
     LazyVerticalGrid(
         columns = GridCells.Fixed(6),
-        modifier = Modifier.height(120.dp),
+        modifier = Modifier.height(100.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+        verticalArrangement   = Arrangement.spacedBy(8.dp)
     ) {
-        items(colors) { colorHex ->
+        items(colors) { hex ->
+            val selected = hex == selectedColor
             Box(
                 modifier = Modifier
-                    .size(40.dp)
-                    .background(
-                        color = Color(android.graphics.Color.parseColor(colorHex)),
-                        shape = CircleShape
-                    )
+                    .size(36.dp)
+                    .background(parseHexColor(hex), CircleShape)
                     .border(
-                        width = if (colorHex == selectedColor) 3.dp else 0.dp,
-                        color = MaterialTheme.colorScheme.primary,
-                        shape = CircleShape
+                        width  = if (selected) 3.dp else 0.dp,
+                        color  = MaterialTheme.colorScheme.primary,
+                        shape  = CircleShape
                     )
-                    .clickable { onColorSelect(colorHex) }
+                    .clickable { onColorSelect(hex) }
             )
         }
     }

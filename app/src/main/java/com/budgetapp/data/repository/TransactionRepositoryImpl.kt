@@ -92,6 +92,14 @@ class TransactionRepositoryImpl @Inject constructor(
         transactionDao.deleteTransactionsByIds(transactions.map { it.id })
     }
 
+    override suspend fun reassignCategory(fromCategoryId: Long, toCategoryId: Long) {
+        transactionDao.reassignCategory(fromCategoryId, toCategoryId)
+    }
+
+    override suspend fun deleteTransactionsByCategory(categoryId: Long) {
+        transactionDao.deleteTransactionsByCategory(categoryId)
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private suspend fun logChange(action: ChangeAction, id: String, displayName: String, snapshot: String) {

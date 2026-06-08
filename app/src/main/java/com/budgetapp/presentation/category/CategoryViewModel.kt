@@ -5,153 +5,181 @@ import androidx.lifecycle.viewModelScope
 import com.budgetapp.domain.model.Category
 import com.budgetapp.domain.repository.AuthRepository
 import com.budgetapp.domain.repository.CategoryRepository
-import com.budgetapp.domain.usecase.category.GetAllCategoriesUseCase
+import com.budgetapp.domain.repository.TransactionRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
-data class CategoryFormState(
-    val id: Long = 0,
-    val name: String = "",
-    val icon: String = "",
-    val color: String = "",
-    val nameError: String? = null,
-    val iconError: String? = null,
-    val colorError: String? = null,
-    val isLoading: Boolean = false,
-    val isSaved: Boolean = false,
-    val error: String? = null
-)
+enum class DeleteTransactionOption { REASSIGN, DELETE_ALL }
 
-sealed class CategoryUiState {
-    data object Loading : CategoryUiState()
-    data class Success(val categories: List<Category>) : CategoryUiState()
-    data class Error(val message: String) : CategoryUiState()
-}
+data class CategoriesUiState(
+    val categories: List<Category> = emptyList(),
+    val isLoading: Boolean = true,
+    val error: String? = null,
+    // Add / edit dialog
+    val editingCategory: Category? = null,
+    val showEditDialog: Boolean = false,
+    // Delete dialog
+    val deletingCategory: Category? = null,
+    val showDeleteDialog: Boolean = false,
+    val deleteOption: DeleteTransactionOption = DeleteTransactionOption.REASSIGN,
+    val reassignTargetId: Long? = null,
+    // Merge dialog
+    val mergingFrom: Category? = null,
+    val mergeTargetId: Long? = null,
+    val showMergeDialog: Boolean = false
+)
 
 @HiltViewModel
 class CategoryViewModel @Inject constructor(
     private val categoryRepository: CategoryRepository,
-    private val authRepository: AuthRepository,
-    getAllCategoriesUseCase: GetAllCategoriesUseCase
+    private val transactionRepository: TransactionRepository,
+    private val authRepository: AuthRepository
 ) : ViewModel() {
 
-    val categories: StateFlow<CategoryUiState> = getAllCategoriesUseCase()
-        .map<List<Category>, CategoryUiState> { CategoryUiState.Success(it) }
-        .catch { emit(CategoryUiState.Error(it.message ?: "Failed to load categories")) }
-        .stateIn(
-            scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(5000),
-            initialValue = CategoryUiState.Loading
-        )
+    private val _uiState = MutableStateFlow(CategoriesUiState())
+    val uiState: StateFlow<CategoriesUiState> = _uiState.asStateFlow()
 
-    private val _formState = MutableStateFlow(CategoryFormState())
-    val formState: StateFlow<CategoryFormState> = _formState.asStateFlow()
+    init {
+        viewModelScope.launch {
+            categoryRepository.getAllCategories().collect { cats ->
+                _uiState.update { it.copy(categories = cats, isLoading = false) }
+            }
+        }
+    }
 
-    fun loadCategory(categoryId: Long) {
+    // ── Edit / Add ────────────────────────────────────────────────────────────
+
+    fun openAddDialog() {
+        _uiState.update { it.copy(editingCategory = null, showEditDialog = true) }
+    }
+
+    fun openEditDialog(category: Category) {
+        _uiState.update { it.copy(editingCategory = category, showEditDialog = true) }
+    }
+
+    fun closeEditDialog() {
+        _uiState.update { it.copy(editingCategory = null, showEditDialog = false) }
+    }
+
+    fun saveCategory(name: String, icon: String, color: String) {
+        val editing = _uiState.value.editingCategory
+        val nextOrder = _uiState.value.categories.size
         viewModelScope.launch {
             try {
-                val category = categoryRepository.getCategoryById(categoryId)
-                if (category != null) {
-                    _formState.update {
-                        it.copy(
-                            id = category.id,
-                            name = category.name,
-                            icon = category.icon,
-                            color = category.color
-                        )
+                val category = Category(
+                    id           = editing?.id ?: 0L,
+                    name         = name.trim(),
+                    icon         = icon,
+                    color        = color,
+                    isCustom     = editing?.isCustom ?: true,
+                    displayOrder = editing?.displayOrder ?: nextOrder
+                )
+                if (editing == null) categoryRepository.insertCategory(category)
+                else                 categoryRepository.updateCategory(category)
+                closeEditDialog()
+            } catch (e: Exception) {
+                _uiState.update { it.copy(error = e.message) }
+            }
+        }
+    }
+
+    // ── Reorder ───────────────────────────────────────────────────────────────
+
+    fun moveCategory(fromIndex: Int, toIndex: Int) {
+        val current = _uiState.value.categories.toMutableList()
+        if (fromIndex !in current.indices || toIndex !in current.indices) return
+        current.add(toIndex, current.removeAt(fromIndex))
+        _uiState.update { it.copy(categories = current) }
+    }
+
+    fun commitReorder() {
+        val orderedIds = _uiState.value.categories.map { it.id }
+        viewModelScope.launch { categoryRepository.reorderCategories(orderedIds) }
+    }
+
+    // ── Delete ────────────────────────────────────────────────────────────────
+
+    fun openDeleteDialog(category: Category) {
+        val defaultTarget = _uiState.value.categories.firstOrNull { it.id != category.id }
+        _uiState.update {
+            it.copy(
+                deletingCategory  = category,
+                showDeleteDialog  = true,
+                deleteOption      = DeleteTransactionOption.REASSIGN,
+                reassignTargetId  = defaultTarget?.id
+            )
+        }
+    }
+
+    fun setDeleteOption(option: DeleteTransactionOption) {
+        _uiState.update { it.copy(deleteOption = option) }
+    }
+
+    fun setReassignTarget(categoryId: Long) {
+        _uiState.update { it.copy(reassignTargetId = categoryId) }
+    }
+
+    fun confirmDelete() {
+        val state = _uiState.value
+        val category = state.deletingCategory ?: return
+        viewModelScope.launch {
+            try {
+                when (state.deleteOption) {
+                    DeleteTransactionOption.REASSIGN -> {
+                        val targetId = state.reassignTargetId ?: return@launch
+                        transactionRepository.reassignCategory(category.id, targetId)
+                    }
+                    DeleteTransactionOption.DELETE_ALL -> {
+                        transactionRepository.deleteTransactionsByCategory(category.id)
                     }
                 }
-            } catch (e: Exception) {
-                _formState.update { it.copy(error = "Failed to load category") }
-            }
-        }
-    }
-
-    fun onNameChange(name: String) {
-        _formState.update { it.copy(name = name, nameError = null) }
-    }
-
-    fun onIconChange(icon: String) {
-        _formState.update { it.copy(icon = icon, iconError = null) }
-    }
-
-    fun onColorChange(color: String) {
-        _formState.update { it.copy(color = color, colorError = null) }
-    }
-
-    fun saveCategory() {
-        if (!validateForm()) return
-
-        viewModelScope.launch {
-            try {
-                _formState.update { it.copy(isLoading = true, error = null) }
-
-                val userId = authRepository.getCurrentUserId()
-                    ?: throw Exception("User not logged in")
-
-                val category = Category(
-                    id = _formState.value.id,
-                    name = _formState.value.name,
-                    icon = _formState.value.icon,
-                    color = _formState.value.color,
-                    isCustom = true
-                )
-
-                if (_formState.value.id == 0L) {
-                    categoryRepository.insertCategory(category)
-                } else {
-                    categoryRepository.updateCategory(category)
-                }
-
-                _formState.update { it.copy(isLoading = false, isSaved = true) }
-            } catch (e: Exception) {
-                _formState.update {
-                    it.copy(
-                        isLoading = false,
-                        error = e.message ?: "Failed to save category"
-                    )
-                }
-            }
-        }
-    }
-
-    fun deleteCategory(category: Category) {
-        viewModelScope.launch {
-            try {
-                if (!category.isCustom) {
-                    throw Exception("Cannot delete built-in categories")
-                }
                 categoryRepository.deleteCategory(category)
+                _uiState.update { it.copy(deletingCategory = null, showDeleteDialog = false) }
             } catch (e: Exception) {
-                _formState.update { it.copy(error = e.message ?: "Failed to delete category") }
+                _uiState.update { it.copy(error = e.message) }
             }
         }
     }
 
-    fun resetFormState() {
-        _formState.value = CategoryFormState()
+    fun dismissDeleteDialog() {
+        _uiState.update { it.copy(deletingCategory = null, showDeleteDialog = false) }
     }
 
-    private fun validateForm(): Boolean {
-        var isValid = true
+    // ── Merge ─────────────────────────────────────────────────────────────────
 
-        if (_formState.value.name.isBlank()) {
-            _formState.update { it.copy(nameError = "Category name is required") }
-            isValid = false
+    fun openMergeDialog(category: Category) {
+        val defaultTarget = _uiState.value.categories.firstOrNull { it.id != category.id }
+        _uiState.update {
+            it.copy(mergingFrom = category, showMergeDialog = true, mergeTargetId = defaultTarget?.id)
         }
+    }
 
-        if (_formState.value.icon.isBlank()) {
-            _formState.update { it.copy(iconError = "Please select an icon") }
-            isValid = false
+    fun setMergeTarget(categoryId: Long) {
+        _uiState.update { it.copy(mergeTargetId = categoryId) }
+    }
+
+    fun confirmMerge() {
+        val state = _uiState.value
+        val from = state.mergingFrom ?: return
+        val toId = state.mergeTargetId ?: return
+        viewModelScope.launch {
+            try {
+                transactionRepository.reassignCategory(from.id, toId)
+                categoryRepository.deleteCategory(from)
+                _uiState.update { it.copy(mergingFrom = null, mergeTargetId = null, showMergeDialog = false) }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(error = e.message) }
+            }
         }
+    }
 
-        if (_formState.value.color.isBlank()) {
-            _formState.update { it.copy(colorError = "Please select a color") }
-            isValid = false
-        }
+    fun dismissMergeDialog() {
+        _uiState.update { it.copy(mergingFrom = null, mergeTargetId = null, showMergeDialog = false) }
+    }
 
-        return isValid
+    fun clearError() {
+        _uiState.update { it.copy(error = null) }
     }
 }

@@ -87,9 +87,17 @@ class CategoryRepositoryImpl @Inject constructor(
         categoryDao.deleteCategoryById(category.id)
     }
 
+    override suspend fun reorderCategories(orderedIds: List<Long>) {
+        orderedIds.forEachIndexed { index, id ->
+            categoryDao.updateCategoryOrder(id, index)
+        }
+    }
+
     override suspend fun seedBuiltInCategories() {
         if (categoryDao.getAllCategoriesSync().isNotEmpty()) return
-        categoryDao.insertCategories(defaultCategories())
+        // Seed with explicit display order matching the list position
+        val withOrder = defaultCategories().mapIndexed { i, e -> e.copy(displayOrder = i) }
+        categoryDao.insertCategories(withOrder)
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

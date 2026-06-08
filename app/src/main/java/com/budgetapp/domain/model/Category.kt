@@ -5,5 +5,6 @@ data class Category(
     val name: String,
     val icon: String,
     val color: String,
-    val isCustom: Boolean = false
+    val isCustom: Boolean = false,
+    val displayOrder: Int = 0
 )

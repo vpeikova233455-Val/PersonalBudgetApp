@@ -22,8 +22,8 @@ android {
         applicationId = "com.vpeikova.budgetapp"
         minSdk = 26
         targetSdk = 34
-        versionCode = 54
-        versionName = "2.9.9"
+        versionCode = 55
+        versionName = "3.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -136,6 +136,9 @@ dependencies {
     implementation("org.apache.poi:poi-ooxml:5.2.5")
     implementation("com.opencsv:opencsv:5.8")
     implementation("com.tom-roush:pdfbox-android:2.0.27.0")
+
+    // Drag-to-reorder for LazyColumn
+    implementation("sh.calvin.reorderable:reorderable:2.4.0")
 
     // Charts
     implementation("co.yml:ycharts:2.1.0")

@@ -48,6 +48,12 @@ interface TransactionDao {
     @Query("DELETE FROM transactions WHERE id IN (:ids)")
     suspend fun deleteTransactionsByIds(ids: List<String>)
 
+    @Query("UPDATE transactions SET categoryId = :newCategoryId WHERE categoryId = :oldCategoryId")
+    suspend fun reassignCategory(oldCategoryId: Long, newCategoryId: Long)
+
+    @Query("DELETE FROM transactions WHERE categoryId = :categoryId")
+    suspend fun deleteTransactionsByCategory(categoryId: Long)
+
     @Query("UPDATE transactions SET syncStatus = :status WHERE id = :transactionId")
     suspend fun updateSyncStatus(transactionId: String, status: SyncStatus)
 }

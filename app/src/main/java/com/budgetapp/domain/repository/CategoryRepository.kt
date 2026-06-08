@@ -11,5 +11,6 @@ interface CategoryRepository {
     suspend fun insertCategory(category: Category): Long
     suspend fun updateCategory(category: Category)
     suspend fun deleteCategory(category: Category)
+    suspend fun reorderCategories(orderedIds: List<Long>)
     suspend fun seedBuiltInCategories()
 }

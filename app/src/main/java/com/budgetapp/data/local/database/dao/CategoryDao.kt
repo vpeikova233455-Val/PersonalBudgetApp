@@ -7,16 +7,16 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface CategoryDao {
 
-    @Query("SELECT * FROM categories ORDER BY name ASC")
+    @Query("SELECT * FROM categories ORDER BY display_order ASC, name ASC")
     fun getAllCategories(): Flow<List<CategoryEntity>>
 
-    @Query("SELECT * FROM categories ORDER BY name ASC")
+    @Query("SELECT * FROM categories ORDER BY display_order ASC, name ASC")
     suspend fun getAllCategoriesSync(): List<CategoryEntity>
 
-    @Query("SELECT * FROM categories WHERE isCustom = 0 ORDER BY name ASC")
+    @Query("SELECT * FROM categories WHERE isCustom = 0 ORDER BY display_order ASC, name ASC")
     fun getBuiltInCategories(): Flow<List<CategoryEntity>>
 
-    @Query("SELECT * FROM categories WHERE isCustom = 1 AND userId = :userId ORDER BY name ASC")
+    @Query("SELECT * FROM categories WHERE isCustom = 1 AND userId = :userId ORDER BY display_order ASC, name ASC")
     fun getCustomCategories(userId: String): Flow<List<CategoryEntity>>
 
     @Query("SELECT * FROM categories WHERE id = :categoryId")
@@ -36,4 +36,7 @@ interface CategoryDao {
 
     @Query("DELETE FROM categories WHERE id = :categoryId")
     suspend fun deleteCategoryById(categoryId: Long)
+
+    @Query("UPDATE categories SET display_order = :order WHERE id = :id")
+    suspend fun updateCategoryOrder(id: Long, order: Int)
 }
