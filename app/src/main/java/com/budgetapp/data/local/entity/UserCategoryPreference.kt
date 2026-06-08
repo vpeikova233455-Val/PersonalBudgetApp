@@ -7,9 +7,11 @@ import androidx.room.PrimaryKey
 data class UserCategoryPreference(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val userId: String,
-    val merchantPattern: String, // e.g., "netflix", "starbucks"
+    val merchantPattern: String,
     val categoryId: Long,
     val usageCount: Int = 1,
     val lastUsedTimestamp: Long = System.currentTimeMillis(),
-    val isAutomatic: Boolean = false
+    val isAutomatic: Boolean = false,
+    val syncStatus: SyncStatus = SyncStatus.PENDING,
+    val lastModifiedTimestamp: Long = System.currentTimeMillis()
 )

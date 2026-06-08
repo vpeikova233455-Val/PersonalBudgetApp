@@ -2,6 +2,7 @@ package com.budgetapp.data.local.database.dao
 
 import androidx.room.*
 import com.budgetapp.data.local.entity.RecurringTransactionEntity
+import com.budgetapp.data.local.entity.SyncStatus
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -30,4 +31,10 @@ interface RecurringTransactionDao {
 
     @Query("UPDATE recurring_transactions SET isActive = 0 WHERE id = :recurringId")
     suspend fun deactivateRecurring(recurringId: String)
+
+    @Query("SELECT * FROM recurring_transactions WHERE syncStatus = :status")
+    suspend fun getRecurringBySyncStatus(status: SyncStatus): List<RecurringTransactionEntity>
+
+    @Query("UPDATE recurring_transactions SET syncStatus = :status WHERE id = :id")
+    suspend fun updateSyncStatus(id: String, status: SyncStatus)
 }

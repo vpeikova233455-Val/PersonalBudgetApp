@@ -2,6 +2,7 @@ package com.budgetapp.data.local.database.dao
 
 import androidx.room.*
 import com.budgetapp.data.local.entity.BudgetEntity
+import com.budgetapp.data.local.entity.SyncStatus
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -27,4 +28,10 @@ interface BudgetDao {
 
     @Query("DELETE FROM budgets WHERE id = :budgetId")
     suspend fun deleteBudgetById(budgetId: Long)
+
+    @Query("SELECT * FROM budgets WHERE syncStatus = :status")
+    suspend fun getBudgetsBySyncStatus(status: SyncStatus): List<BudgetEntity>
+
+    @Query("UPDATE budgets SET syncStatus = :status WHERE id = :id")
+    suspend fun updateSyncStatus(id: Long, status: SyncStatus)
 }

@@ -1,6 +1,7 @@
 package com.budgetapp.data.local.database.dao
 
 import androidx.room.*
+import com.budgetapp.data.local.entity.SyncStatus
 import com.budgetapp.data.local.entity.UserCategoryPreference
 import kotlinx.coroutines.flow.Flow
 
@@ -27,4 +28,10 @@ interface UserCategoryPreferenceDao {
 
     @Delete
     suspend fun deletePreference(preference: UserCategoryPreference)
+
+    @Query("SELECT * FROM user_category_preferences WHERE syncStatus = :status")
+    suspend fun getPreferencesBySyncStatus(status: SyncStatus): List<UserCategoryPreference>
+
+    @Query("UPDATE user_category_preferences SET syncStatus = :status WHERE id = :id")
+    suspend fun updateSyncStatus(id: Long, status: SyncStatus)
 }

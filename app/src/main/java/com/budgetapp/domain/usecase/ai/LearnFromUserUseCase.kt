@@ -1,6 +1,7 @@
 package com.budgetapp.domain.usecase.ai
 
 import com.budgetapp.data.local.database.dao.UserCategoryPreferenceDao
+import com.budgetapp.data.local.entity.SyncStatus
 import com.budgetapp.data.local.entity.UserCategoryPreference
 import javax.inject.Inject
 
@@ -28,13 +29,16 @@ class LearnFromUserUseCase @Inject constructor(
             pattern = merchantPattern
         )
 
+        val now = System.currentTimeMillis()
         if (existingPreference != null) {
             if (existingPreference.categoryId == selectedCategoryId) {
                 userPreferenceDao.updatePreference(
                     existingPreference.copy(
                         usageCount = existingPreference.usageCount + 1,
-                        lastUsedTimestamp = System.currentTimeMillis(),
-                        isAutomatic = if (setAutomatic) true else existingPreference.isAutomatic
+                        lastUsedTimestamp = now,
+                        isAutomatic = if (setAutomatic) true else existingPreference.isAutomatic,
+                        syncStatus = SyncStatus.PENDING,
+                        lastModifiedTimestamp = now
                     )
                 )
             } else {
@@ -42,8 +46,10 @@ class LearnFromUserUseCase @Inject constructor(
                     existingPreference.copy(
                         categoryId = selectedCategoryId,
                         usageCount = 1,
-                        lastUsedTimestamp = System.currentTimeMillis(),
-                        isAutomatic = false
+                        lastUsedTimestamp = now,
+                        isAutomatic = false,
+                        syncStatus = SyncStatus.PENDING,
+                        lastModifiedTimestamp = now
                     )
                 )
             }
@@ -54,7 +60,9 @@ class LearnFromUserUseCase @Inject constructor(
                     merchantPattern = merchantPattern,
                     categoryId = selectedCategoryId,
                     usageCount = 1,
-                    lastUsedTimestamp = System.currentTimeMillis()
+                    lastUsedTimestamp = now,
+                    syncStatus = SyncStatus.PENDING,
+                    lastModifiedTimestamp = now
                 )
             )
         }

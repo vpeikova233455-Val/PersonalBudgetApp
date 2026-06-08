@@ -23,8 +23,14 @@ object SyncModule {
         firestore: FirebaseFirestore,
         transactionDao: TransactionDao,
         categoryDao: CategoryDao,
-        budgetDao: BudgetDao
+        budgetDao: BudgetDao,
+        recurringTransactionDao: RecurringTransactionDao,
+        pensionAccountDao: PensionAccountDao,
+        userCategoryPreferenceDao: UserCategoryPreferenceDao
     ): SyncRepository {
-        return SyncRepositoryImpl(context, firestore, transactionDao, categoryDao, budgetDao)
+        return SyncRepositoryImpl(
+            context, firestore, transactionDao, categoryDao, budgetDao,
+            recurringTransactionDao, pensionAccountDao, userCategoryPreferenceDao
+        )
     }
 }

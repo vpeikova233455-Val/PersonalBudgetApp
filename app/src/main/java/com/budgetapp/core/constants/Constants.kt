@@ -8,6 +8,10 @@ object Constants {
     const val COLLECTION_BUDGETS = "budgets"
     const val COLLECTION_RECURRING = "recurring_transactions"
     const val COLLECTION_PENSIONS = "pension_accounts"
+    const val COLLECTION_LEARNING_RULES = "learning_rules"
+
+    // Cloud restore
+    const val KEY_RESTORE_DONE_PREFIX = "restore_done_"
 
     // Shared Preferences
     const val PREFS_NAME = "secure_prefs"

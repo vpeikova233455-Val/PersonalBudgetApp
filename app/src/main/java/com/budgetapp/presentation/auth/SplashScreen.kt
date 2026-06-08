@@ -4,25 +4,24 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import com.budgetapp.core.util.AppLogger
-import kotlinx.coroutines.delay
-
-private const val TAG = "SplashScreen"
+import androidx.hilt.navigation.compose.hiltViewModel
 
 @Composable
 fun SplashScreen(
     onNavigateToLogin: () -> Unit,
-    onNavigateToDashboard: (String) -> Unit
+    onNavigateToDashboard: (String) -> Unit,
+    viewModel: SplashViewModel = hiltViewModel()
 ) {
-    LaunchedEffect(Unit) {
-        AppLogger.i(TAG, "App started — single-user mode, skipping auth")
-        delay(1000)
-        onNavigateToDashboard("local_user")
+    val state by viewModel.state.collectAsState()
+
+    LaunchedEffect(state) {
+        if (state is SplashState.Ready) {
+            onNavigateToDashboard("local_user")
+        }
     }
 
     Box(
@@ -40,6 +39,12 @@ fun SplashScreen(
             )
             Spacer(modifier = Modifier.height(16.dp))
             CircularProgressIndicator()
+            Spacer(modifier = Modifier.height(12.dp))
+            Text(
+                text = if (state is SplashState.Restoring) "Restoring your data…" else "",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }

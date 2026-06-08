@@ -3,7 +3,8 @@ package com.budgetapp.data.remote.firebase.mapper
 import com.budgetapp.data.local.entity.*
 import com.budgetapp.data.remote.firebase.model.*
 
-// Transaction mappers
+// ── Transactions ──────────────────────────────────────────────────────────────
+
 fun TransactionEntity.toFirestore(): FirestoreTransaction {
     return FirestoreTransaction(
         id = id,
@@ -40,7 +41,8 @@ fun FirestoreTransaction.toEntity(syncStatus: SyncStatus = SyncStatus.SYNCED): T
     )
 }
 
-// Category mappers
+// ── Categories ────────────────────────────────────────────────────────────────
+
 fun CategoryEntity.toFirestore(): FirestoreCategory {
     return FirestoreCategory(
         id = id,
@@ -49,7 +51,8 @@ fun CategoryEntity.toFirestore(): FirestoreCategory {
         color = color,
         isCustom = isCustom,
         userId = userId,
-        lastModifiedTimestamp = lastModifiedTimestamp
+        lastModifiedTimestamp = lastModifiedTimestamp,
+        displayOrder = displayOrder
     )
 }
 
@@ -62,11 +65,13 @@ fun FirestoreCategory.toEntity(syncStatus: SyncStatus = SyncStatus.SYNCED): Cate
         isCustom = isCustom,
         userId = userId,
         syncStatus = syncStatus,
-        lastModifiedTimestamp = lastModifiedTimestamp
+        lastModifiedTimestamp = lastModifiedTimestamp,
+        displayOrder = displayOrder
     )
 }
 
-// Budget mappers
+// ── Budgets ───────────────────────────────────────────────────────────────────
+
 fun BudgetEntity.toFirestore(): FirestoreBudget {
     return FirestoreBudget(
         id = id,
@@ -85,6 +90,107 @@ fun FirestoreBudget.toEntity(syncStatus: SyncStatus = SyncStatus.SYNCED): Budget
         categoryId = categoryId,
         monthlyLimit = monthlyLimit,
         alertThreshold = alertThreshold,
+        syncStatus = syncStatus,
+        lastModifiedTimestamp = lastModifiedTimestamp
+    )
+}
+
+// ── Recurring transactions ────────────────────────────────────────────────────
+
+fun RecurringTransactionEntity.toFirestore(): FirestoreRecurringTransaction {
+    return FirestoreRecurringTransaction(
+        id = id,
+        userId = userId,
+        type = type.name,
+        amount = amount,
+        description = description,
+        categoryId = categoryId,
+        frequency = frequency.name,
+        startDate = startDate,
+        endDate = endDate,
+        isActive = isActive,
+        lastGeneratedDate = lastGeneratedDate,
+        lastModifiedTimestamp = lastModifiedTimestamp
+    )
+}
+
+fun FirestoreRecurringTransaction.toEntity(syncStatus: SyncStatus = SyncStatus.SYNCED): RecurringTransactionEntity {
+    return RecurringTransactionEntity(
+        id = id,
+        userId = userId,
+        type = TransactionType.valueOf(type),
+        amount = amount,
+        description = description,
+        categoryId = categoryId,
+        frequency = RecurrenceFrequency.valueOf(frequency),
+        startDate = startDate,
+        endDate = endDate,
+        isActive = isActive,
+        lastGeneratedDate = lastGeneratedDate,
+        syncStatus = syncStatus,
+        lastModifiedTimestamp = lastModifiedTimestamp
+    )
+}
+
+// ── Pension / savings accounts ────────────────────────────────────────────────
+
+fun PensionAccountEntity.toFirestore(): FirestorePensionAccount {
+    return FirestorePensionAccount(
+        id = id,
+        userId = userId,
+        accountName = accountName,
+        provider = provider,
+        currentValue = currentValue,
+        contributionAmount = contributionAmount,
+        employerContribution = employerContribution,
+        contributionFrequency = contributionFrequency.name,
+        accountType = accountType.name,
+        notes = notes,
+        lastModifiedTimestamp = lastModifiedTimestamp
+    )
+}
+
+fun FirestorePensionAccount.toEntity(syncStatus: SyncStatus = SyncStatus.SYNCED): PensionAccountEntity {
+    return PensionAccountEntity(
+        id = id,
+        userId = userId,
+        accountName = accountName,
+        provider = provider,
+        currentValue = currentValue,
+        contributionAmount = contributionAmount,
+        employerContribution = employerContribution,
+        contributionFrequency = RecurrenceFrequency.valueOf(contributionFrequency),
+        accountType = AccountType.valueOf(accountType),
+        notes = notes,
+        syncStatus = syncStatus,
+        lastModifiedTimestamp = lastModifiedTimestamp
+    )
+}
+
+// ── Learning rules (UserCategoryPreference) ───────────────────────────────────
+
+fun UserCategoryPreference.toFirestore(): FirestoreLearningRule {
+    return FirestoreLearningRule(
+        id = id,
+        userId = userId,
+        merchantPattern = merchantPattern,
+        categoryId = categoryId,
+        usageCount = usageCount,
+        lastUsedTimestamp = lastUsedTimestamp,
+        isAutomatic = isAutomatic,
+        lastModifiedTimestamp = lastModifiedTimestamp
+    )
+}
+
+fun FirestoreLearningRule.toEntity(syncStatus: SyncStatus = SyncStatus.SYNCED): UserCategoryPreference {
+    return UserCategoryPreference(
+        id = id,
+        userId = userId,
+        merchantPattern = merchantPattern,
+        categoryId = categoryId,
+        usageCount = usageCount,
+        lastUsedTimestamp = lastUsedTimestamp,
+        isAutomatic = isAutomatic,
         syncStatus = syncStatus,
         lastModifiedTimestamp = lastModifiedTimestamp
     )

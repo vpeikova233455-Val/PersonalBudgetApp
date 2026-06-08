@@ -14,6 +14,10 @@ interface SyncRepository {
     suspend fun syncAll(): Result<Unit>
     suspend fun pushLocalChanges(): Result<Unit>
     suspend fun pullRemoteChanges(): Result<Unit>
+
+    // Pull all cloud data into an empty local database (used after reinstall).
+    suspend fun restoreAll(): Result<Unit>
+
     fun getSyncStatus(): Flow<SyncStatus>
     suspend fun getLastSyncTime(): Long?
     suspend fun getPendingChangesCount(): Int

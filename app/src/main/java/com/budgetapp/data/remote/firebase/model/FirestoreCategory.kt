@@ -9,5 +9,6 @@ data class FirestoreCategory(
     @PropertyName("color") val color: String = "",
     @PropertyName("isCustom") val isCustom: Boolean = false,
     @PropertyName("userId") val userId: String? = null,
-    @PropertyName("lastModifiedTimestamp") val lastModifiedTimestamp: Long = 0
+    @PropertyName("lastModifiedTimestamp") val lastModifiedTimestamp: Long = 0,
+    @PropertyName("displayOrder") val displayOrder: Int = 0
 )

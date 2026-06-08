@@ -2,6 +2,7 @@ package com.budgetapp.data.local.database.dao
 
 import androidx.room.*
 import com.budgetapp.data.local.entity.CategoryEntity
+import com.budgetapp.data.local.entity.SyncStatus
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -39,4 +40,10 @@ interface CategoryDao {
 
     @Query("UPDATE categories SET display_order = :order WHERE id = :id")
     suspend fun updateCategoryOrder(id: Long, order: Int)
+
+    @Query("SELECT * FROM categories WHERE isCustom = 1 AND syncStatus = :status")
+    suspend fun getCustomCategoriesBySyncStatus(status: SyncStatus): List<CategoryEntity>
+
+    @Query("UPDATE categories SET syncStatus = :status WHERE id = :id")
+    suspend fun updateSyncStatus(id: Long, status: SyncStatus)
 }
