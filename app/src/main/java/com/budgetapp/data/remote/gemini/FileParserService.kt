@@ -514,14 +514,11 @@ class FileParserService @Inject constructor(
     private fun parseExcelRow(row: org.apache.poi.ss.usermodel.Row, mapping: ColumnMapping): ParsedTransaction? {
         val cells = (0 until row.lastCellNum).map { i -> cellText(row.getCell(i)) }
         val parsed = parseRowData(cells, mapping) ?: return null
-        // Color detection: red font = expense, green font = income.
-        // For combined debit/credit columns the sign is the source of truth —
-        // description overrides are intentionally skipped so a correctly-signed
-        // value is never flipped to the wrong type.
+        // Cell color is the sole authority: green = INCOME, red = EXPENSE.
+        // Description-based overrides are never applied — only the column position
+        // (debit vs credit) or cell color determines the transaction type.
         val colorType = detectTypeFromCellColors(row, mapping) ?: return parsed
-        val type = if (mapping.isCombinedAmountColumn) colorType
-                   else overrideTypeByDescription(parsed.description, colorType)
-        return parsed.copy(type = type)
+        return parsed.copy(type = colorType)
     }
 
     // Returns the transaction type implied by the font color of the amount cell,
@@ -530,15 +527,20 @@ class FileParserService @Inject constructor(
         row: org.apache.poi.ss.usermodel.Row,
         mapping: ColumnMapping
     ): TransactionType? {
-        // For separate debit/credit columns, check whichever cell has a value.
+        // For separate debit/credit columns, select the cell that holds the actual
+        // non-zero transaction value — NOT whichever text is non-blank.  A "0" in the
+        // debit column is non-blank but irrelevant; checking its color would wrongly
+        // classify an income transaction as expense.
         if (mapping.debitColumn != null && mapping.creditColumn != null) {
             val debitCell  = row.getCell(mapping.debitColumn!!)
             val creditCell = row.getCell(mapping.creditColumn!!)
-            val debitText  = cellText(debitCell)
-            val creditText = cellText(creditCell)
+            val debitVal   = parseAmount(cellText(debitCell))  ?: 0.0
+            val creditVal  = parseAmount(cellText(creditCell)) ?: 0.0
             return when {
-                debitText.isNotBlank()  -> cellFontColorType(debitCell)
-                creditText.isNotBlank() -> cellFontColorType(creditCell)
+                // Credit cell has a positive value → income; use its color if available.
+                creditVal > 0.01 -> cellFontColorType(creditCell) ?: TransactionType.INCOME
+                // Debit cell has a positive value → expense; use its color if available.
+                debitVal  > 0.01 -> cellFontColorType(debitCell)  ?: TransactionType.EXPENSE
                 else -> null
             }
         }
@@ -737,24 +739,26 @@ class FileParserService @Inject constructor(
         headers.forEachIndexed { index, raw ->
             val h = raw.trim().lowercase()
             when {
-                DATE_KEYWORDS.any { h.contains(it) }    -> if (mapping.dateColumn == null) mapping.dateColumn = index
-                DESC_KEYWORDS.any { h.contains(it) }    -> if (mapping.descriptionColumn == null) mapping.descriptionColumn = index
+                DATE_KEYWORDS.any { h.contains(it) }      -> if (mapping.dateColumn == null) mapping.dateColumn = index
+                DESC_KEYWORDS.any { h.contains(it) }      -> if (mapping.descriptionColumn == null) mapping.descriptionColumn = index
                 // Balance must be checked before debit/credit — "credit balance" / "debit balance"
                 // are balance columns, not transaction columns.
-                BALANCE_KEYWORDS.any { h.contains(it) } -> if (mapping.balanceColumn == null) mapping.balanceColumn = index
-                // Combined debit+credit header (e.g. "זכות/חובה") — treat as a single
-                // signed amount column; type is determined by sign (negative = expense,
-                // positive = income) and optionally confirmed by font/fill color.
-                // Description-based overrides are NOT applied for this column type.
+                BALANCE_KEYWORDS.any { h.contains(it) }   -> if (mapping.balanceColumn == null) mapping.balanceColumn = index
+                // Reference/document number — must be tracked so it is never mistaken for an
+                // amount when columns shift.  Checked before debit/credit so that a header like
+                // "אסמכתה" is not accidentally matched by a substring of another keyword.
+                REFERENCE_KEYWORDS.any { h.contains(it) } -> if (mapping.referenceColumn == null) mapping.referenceColumn = index
+                // Combined debit+credit header (e.g. "זכות/חובה") — type determined by cell
+                // color (green = INCOME, red = EXPENSE); sign used only as last resort.
                 DEBIT_KEYWORDS.any { h.contains(it) } && CREDIT_KEYWORDS.any { h.contains(it) } -> {
                     if (mapping.amountColumn == null) {
                         mapping.amountColumn = index
                         mapping.isCombinedAmountColumn = true
                     }
                 }
-                DEBIT_KEYWORDS.any { h.contains(it) }   -> if (mapping.debitColumn == null) mapping.debitColumn = index
-                CREDIT_KEYWORDS.any { h.contains(it) }  -> if (mapping.creditColumn == null) mapping.creditColumn = index
-                AMOUNT_KEYWORDS.any { h.contains(it) }  -> if (mapping.amountColumn == null) mapping.amountColumn = index
+                DEBIT_KEYWORDS.any { h.contains(it) }     -> if (mapping.debitColumn == null) mapping.debitColumn = index
+                CREDIT_KEYWORDS.any { h.contains(it) }    -> if (mapping.creditColumn == null) mapping.creditColumn = index
+                AMOUNT_KEYWORDS.any { h.contains(it) }    -> if (mapping.amountColumn == null) mapping.amountColumn = index
             }
         }
 
@@ -778,14 +782,16 @@ class FileParserService @Inject constructor(
             ?.takeIf { it.isNotBlank() && !isSummaryRow(it) }
             ?: return null
 
+        // Capture the reference number early so we can validate against it later.
+        // The reference column (אסמכתה) must NEVER be used as an amount source.
+        val referenceVal = mapping.referenceColumn?.let { parseAmount(cells.getOrNull(it) ?: "") }
+
         // Evaluate every available source up front, then pick with a single priority order:
         //   explicit debit value > explicit credit value > signed/unsigned amount column.
         // This correctly handles all formats:
         //   • separate debit + credit columns (most Israeli/EU bank exports)
         //   • single signed/unsigned amount column
         //   • only-debit or only-credit column
-        //   • amount + credit (no debit) — income rows have creditVal > 0; expense rows fall
-        //     through to the amountVal branch where sign or single-column context decides
         val debitVal  = mapping.debitColumn?.let  { parseAmount(cells.getOrNull(it) ?: "") }
         val creditVal = mapping.creditColumn?.let { parseAmount(cells.getOrNull(it) ?: "") }
         val amtStr    = mapping.amountColumn?.let { cells.getOrNull(it)?.trim() }
@@ -793,15 +799,18 @@ class FileParserService @Inject constructor(
 
         val amount: Double
         val type: TransactionType
+        val amountSourceDesc: String
 
         when {
             (debitVal ?: 0.0) > 0.0 -> {
                 amount = debitVal!!
                 type   = TransactionType.EXPENSE
+                amountSourceDesc = "חובה/debit col=${mapping.debitColumn}"
             }
             (creditVal ?: 0.0) > 0.0 -> {
                 amount = creditVal!!
                 type   = TransactionType.INCOME
+                amountSourceDesc = "זכות/credit col=${mapping.creditColumn}"
             }
             (amtVal ?: 0.0) > 0.0 -> {
                 amount = amtVal!!
@@ -821,26 +830,45 @@ class FileParserService @Inject constructor(
                     mapping.creditColumn != null -> TransactionType.INCOME
                     else -> TransactionType.EXPENSE
                 }
+                amountSourceDesc = "amount col=${mapping.amountColumn}"
             }
             else -> return null
         }
 
         if (amount == 0.0) return null
 
+        // Safety check: if the resolved amount matches the reference number, the parser
+        // has almost certainly read the wrong column (e.g. due to a shifted row).
+        // Log the error and drop this row rather than importing a garbage amount.
+        if (referenceVal != null && referenceVal > 0.0 && amount == referenceVal) {
+            AppLogger.e(IMPORT_TAG, "[Import Error] amount ($amount) equals reference number ($referenceVal) " +
+                "for '$description' — likely column shift. Dropping row. Raw: ${cells.joinToString(" | ")}")
+            return null
+        }
+
+        val typeSourceDesc = when {
+            (debitVal  ?: 0.0) > 0.0 -> "debit column"
+            (creditVal ?: 0.0) > 0.0 -> "credit column"
+            mapping.amountColumn != null -> "amount-column sign"
+            mapping.debitColumn  != null -> "debit-only column"
+            mapping.creditColumn != null -> "credit-only column"
+            else                         -> "default"
+        }
+
+        AppLogger.d(IMPORT_TAG, "[Import Debug] desc='$description' | amount=$amount | type=$type | " +
+            "amountFrom=$amountSourceDesc | typeFrom=$typeSourceDesc")
+
         val dateStr = mapping.dateColumn?.let { cells.getOrNull(it) }
         val date = parseDate(dateStr)
 
+        // Type is determined solely by which column contains the value and/or by cell color
+        // (applied by parseExcelRow for Excel files).  Description-based overrides are
+        // intentionally omitted — the column position and cell color are authoritative.
         return ParsedTransaction(
             description = description,
             amount = amount,
             date = date,
-            // For combined debit/credit columns the numeric sign is authoritative —
-            // skip description overrides so a correctly-signed transaction is never
-            // reclassified. Description overrides remain active for separate
-            // debit/credit column formats where credit card charges appear in the
-            // "credit" column and would otherwise be classified as income.
-            type = if (mapping.isCombinedAmountColumn) type
-                   else overrideTypeByDescription(description, type),
+            type = type,
             rawData = cells.joinToString(" | ")
         )
     }
@@ -1061,9 +1089,13 @@ data class ColumnMapping(
     var debitColumn: Int? = null,
     var creditColumn: Int? = null,
     var balanceColumn: Int? = null,
+    // Reference/document-number column (אסמכתה).  Tracked so that it is never
+    // accidentally used as an amount source, and so the validation check can compare
+    // the resolved amount against the reference value to detect column-shift errors.
+    var referenceColumn: Int? = null,
     // True when amountColumn was detected from a combined debit+credit header
-    // (e.g. "זכות/חובה"). In this case the numeric sign is the source of truth
-    // for expense/income classification; description-based overrides are skipped.
+    // (e.g. "זכות/חובה"). In this case cell color is the primary authority for
+    // expense/income classification; sign is used only as a last resort.
     var isCombinedAmountColumn: Boolean = false
 ) {
     fun hasEnoughColumns() =
