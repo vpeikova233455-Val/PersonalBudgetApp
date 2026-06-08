@@ -25,8 +25,12 @@ class TransactionRepositoryImpl @Inject constructor(
 
     override fun getAllTransactions(userId: String): Flow<List<Transaction>> =
         transactionDao.getAllTransactions(userId).map { entities ->
-            entities.mapNotNull { entity ->
-                categoryDao.getCategoryById(entity.categoryId)?.toDomain()?.let { entity.toDomain(it) }
+            entities.map { entity ->
+                val category = categoryDao.getCategoryById(entity.categoryId)?.toDomain()
+                    ?: com.budgetapp.domain.model.Category(
+                        id = entity.categoryId, name = "Other", icon = "📋", color = "#607D8B"
+                    )
+                entity.toDomain(category)
             }
         }
 
@@ -50,8 +54,12 @@ class TransactionRepositoryImpl @Inject constructor(
 
     override fun getTransactionsByType(userId: String, type: TransactionType): Flow<List<Transaction>> =
         transactionDao.getTransactionsByType(userId, type).map { entities ->
-            entities.mapNotNull { entity ->
-                categoryDao.getCategoryById(entity.categoryId)?.toDomain()?.let { entity.toDomain(it) }
+            entities.map { entity ->
+                val category = categoryDao.getCategoryById(entity.categoryId)?.toDomain()
+                    ?: com.budgetapp.domain.model.Category(
+                        id = entity.categoryId, name = "Other", icon = "📋", color = "#607D8B"
+                    )
+                entity.toDomain(category)
             }
         }
 

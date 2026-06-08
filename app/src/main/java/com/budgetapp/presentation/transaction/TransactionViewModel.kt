@@ -23,6 +23,7 @@ data class TransactionFormState(
     val selectedCategory: Category? = null,
     val date: Long = System.currentTimeMillis(),
     val notes: String = "",
+    val isEditMode: Boolean = false,
     val amountError: String? = null,
     val descriptionError: String? = null,
     val categoryError: String? = null,
@@ -62,7 +63,8 @@ class TransactionViewModel @Inject constructor(
                             description      = transaction.description,
                             selectedCategory = transaction.category,
                             date             = transaction.date,
-                            notes            = transaction.notes ?: ""
+                            notes            = transaction.notes ?: "",
+                            isEditMode       = true
                         )
                     }
                 }
@@ -134,7 +136,11 @@ class TransactionViewModel @Inject constructor(
                     notes       = _formState.value.notes.ifBlank { null }
                 )
 
-                transactionRepository.insertTransaction(transaction)
+                if (_formState.value.isEditMode) {
+                    transactionRepository.updateTransaction(transaction)
+                } else {
+                    transactionRepository.insertTransaction(transaction)
+                }
                 _formState.update { it.copy(isLoading = false, isSaved = true) }
             } catch (e: Exception) {
                 _formState.update {
