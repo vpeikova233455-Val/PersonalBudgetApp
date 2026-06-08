@@ -13,6 +13,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.budgetapp.presentation.components.CategoryPickerDialog
+import com.budgetapp.presentation.transaction.NotesField
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -85,7 +86,8 @@ fun ReviewTransactionsScreen(
                             onCreateCategory = { name, icon ->
                                 viewModel.createCategory(pending.id, name, icon)
                             },
-                            onToggleAutomatic = { viewModel.toggleWantsAutomatic(pending.id) }
+                            onToggleAutomatic = { viewModel.toggleWantsAutomatic(pending.id) },
+                            onNotesChange = { notes -> viewModel.updateNotes(pending.id, notes) }
                         )
                     }
                 }
@@ -104,7 +106,8 @@ private fun PendingTransactionCard(
     onDelete: () -> Unit,
     onSelectCategory: (Long, String) -> Unit,
     onCreateCategory: (name: String, icon: String) -> Unit,
-    onToggleAutomatic: () -> Unit
+    onToggleAutomatic: () -> Unit,
+    onNotesChange: (String) -> Unit
 ) {
     var showCategoryPicker by remember { mutableStateOf(false) }
 
@@ -272,7 +275,12 @@ private fun PendingTransactionCard(
                 }
             }
 
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(8.dp))
+
+            // Optional note
+            NotesField(notes = pending.notes, onChange = onNotesChange)
+
+            Spacer(Modifier.height(8.dp))
 
             // Action buttons
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {

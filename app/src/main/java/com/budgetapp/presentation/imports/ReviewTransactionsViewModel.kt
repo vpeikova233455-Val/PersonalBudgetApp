@@ -144,6 +144,16 @@ class ReviewTransactionsViewModel @Inject constructor(
         }
     }
 
+    fun updateNotes(pendingId: Long, notes: String) {
+        _uiState.update { state ->
+            state.copy(
+                pendingTransactions = state.pendingTransactions.map { tx ->
+                    if (tx.id == pendingId) tx.copy(notes = notes) else tx
+                }
+            )
+        }
+    }
+
     fun approvePendingTransaction(pendingId: Long) {
         viewModelScope.launch {
             val pending = pendingTransactionDao.getPendingById(pendingId) ?: return@launch
@@ -163,7 +173,8 @@ class ReviewTransactionsViewModel @Inject constructor(
                 syncStatus = com.budgetapp.data.local.entity.SyncStatus.PENDING,
                 lastModifiedTimestamp = System.currentTimeMillis(),
                 deviceId = UUID.randomUUID().toString(),
-                firestoreId = null
+                firestoreId = null,
+                notes = uiModel.notes.ifBlank { null }
             )
 
             transactionDao.insertTransaction(transaction)
@@ -233,7 +244,8 @@ data class PendingTransactionUiModel(
     val sourceType: String,
     val aiQuestions: List<String>?,
     val learningState: LearningState,
-    val wantsAutomatic: Boolean = false
+    val wantsAutomatic: Boolean = false,
+    val notes: String = ""
 )
 
 data class CategoryUiModel(
