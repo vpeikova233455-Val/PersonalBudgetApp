@@ -652,6 +652,20 @@ class FileParserServiceTest {
     }
 
     @Test
+    fun `bank PDF - decimal amount preferred over integer reference number`() {
+        // Regression test for reported bug: row "15/05/26 זיכוי - בנק הפועלים(י) 732.00 99012"
+        // was parsed with amount=99012 because the reference integer was larger than the decimal
+        // amount and maxByOrNull picked it. With decimal-preference filtering, all integer tokens
+        // are excluded when any decimal token is present, so 732.00 is the only candidate.
+        val text = bankHeader() + "\n" +
+            bankRow("15/05/26", "זיכוי - בנק הפועלים", "99012", "", "732.00", "1000.00")
+        val txs = extractBankFromText(text)
+        assertEquals(1, txs.size)
+        assertEquals("amount must be 732.00, not the reference number 99012", 732.0, txs[0].amount, 0.001)
+        assertEquals(TransactionType.INCOME, txs[0].type)
+    }
+
+    @Test
     fun `bank PDF - balance is excluded, not chosen as amount`() {
         val text = bankHeader() + "\n" +
             bankRow("03/06/2026", "שירות", "111222", "3500.00", "", "26500.00")

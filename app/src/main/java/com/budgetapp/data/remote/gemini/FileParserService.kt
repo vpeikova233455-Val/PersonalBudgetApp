@@ -201,12 +201,30 @@ class FileParserService @Inject constructor(
         val lLen          = line.length.coerceAtLeast(1).toDouble()
 
         data class Tok(val v: Double, val rel: Double, val rawDigits: String)
-        val toks = PDF_NUM_FINDER.findAll(line).mapNotNull { m ->
+
+        // Collect every non-date numeric token.
+        val allNumToks = PDF_NUM_FINDER.findAll(line).mapNotNull { m ->
             if (allDateRanges.any { r -> m.range.first in r || m.range.last in r }) return@mapNotNull null
             val v = parseAmount(m.value) ?: return@mapNotNull null
             if (v <= 0) return@mapNotNull null
             Tok(v, m.range.first / lLen, m.value.replace(",", ""))
         }.toList()
+
+        // Israeli bank amounts always use decimal notation (e.g. "732.00").
+        // Reference numbers (אסמכתה) are always plain integers (e.g. "99012").
+        // When any decimal token is present, exclude all integer tokens so they
+        // can never be mistaken for an amount — regardless of column proximity.
+        // Only fall back to integers when the row contains no decimal tokens at all
+        // (some non-standard bank exports omit the ".00" suffix on round amounts).
+        val decimalToks = allNumToks.filter {  it.rawDigits.contains('.') }
+        val integerToks = allNumToks.filter { !it.rawDigits.contains('.') }
+        val toks = decimalToks.ifEmpty { allNumToks }
+
+        if (decimalToks.isNotEmpty() && integerToks.isNotEmpty()) {
+            integerToks.forEach { t ->
+                AppLogger.d(IMPORT_TAG, "  skipped integer '${t.rawDigits}' — cannot be amount when decimal tokens are present (likely אסמכתה/balance)")
+            }
+        }
 
         if (toks.isEmpty()) {
             discardLog.add(line to "no numeric amount found")
@@ -248,11 +266,11 @@ class FileParserService @Inject constructor(
                 creditTok != null ->
                     { amount = creditTok.tok.v; type = TransactionType.INCOME  }
                 else -> {
-                    // All tokens were assigned to balance/reference columns by the proximity
-                    // logic. Fall back to the digit-length heuristic so the row isn't lost —
-                    // the user will see it in Review and can correct the amount if needed.
-                    val filtered = toks.filterNot { t -> t.rawDigits.length >= 6 && !t.rawDigits.contains('.') }
-                    val txToks   = if (filtered.size >= 2) filtered.dropLast(1) else filtered
+                    // All tokens mapped to balance/reference columns. Integer tokens are
+                    // already excluded from toks when decimal tokens were present, so use
+                    // toks directly. Drop the rightmost token (running balance) and take
+                    // the smallest remaining value as a last-resort fallback.
+                    val txToks = if (toks.size >= 2) toks.dropLast(1) else toks
                     val fallback = txToks.minByOrNull { it.v }
                     if (fallback == null) {
                         discardLog.add(line to "all amounts mapped to balance/reference columns; no fallback token available")
@@ -263,11 +281,10 @@ class FileParserService @Inject constructor(
                 }
             }
         } else {
-            // No column layout: fall back to digit-length heuristic to filter reference
-            // numbers (typically 6+ digit integers), then drop the rightmost token
-            // (running balance) and take the smallest remaining value.
-            val filtered = toks.filterNot { t -> t.rawDigits.length >= 6 && !t.rawDigits.contains('.') }
-            val txToks   = if (filtered.size >= 2) filtered.dropLast(1) else filtered
+            // No column layout. Integer tokens are already excluded from toks when decimal
+            // tokens exist. Drop the rightmost token (running balance) and take the smallest
+            // remaining value.
+            val txToks = if (toks.size >= 2) toks.dropLast(1) else toks
             val fallback = txToks.minByOrNull { it.v }
             if (fallback == null) {
                 discardLog.add(line to "no non-reference amount found (no-layout fallback)")
@@ -275,6 +292,12 @@ class FileParserService @Inject constructor(
             }
             amount = fallback.v
             type   = TransactionType.EXPENSE
+        }
+
+        // Validation: if the selected amount equals any skipped integer token value,
+        // log a warning — this indicates a possible reference-number / balance misidentification.
+        if (integerToks.any { it.v == amount }) {
+            AppLogger.d(IMPORT_TAG, "  WARNING: selected amount $amount equals a skipped integer token — possible reference-number misidentification. Row: ${line.take(120)}")
         }
 
         if (amount == 0.0) {
@@ -355,15 +378,20 @@ class FileParserService @Inject constructor(
         val allDateRanges = allDates.map { it.range }
         val lLen          = line.length.coerceAtLeast(1).toDouble()
 
-        data class Tok(val v: Double, val pos: Int)
-        val toks = PDF_NUM_FINDER.findAll(line).mapNotNull { m ->
+        data class Tok(val v: Double, val pos: Int, val rawDigits: String)
+        val allNumToks = PDF_NUM_FINDER.findAll(line).mapNotNull { m ->
             if (allDateRanges.any { r -> m.range.first in r || m.range.last in r }) return@mapNotNull null
-            val digits = m.value.replace(",", "")
-            if (digits.length >= 6 && !digits.contains('.')) return@mapNotNull null
             val v = parseAmount(m.value) ?: return@mapNotNull null
             if (v <= 0) return@mapNotNull null
-            Tok(v, m.range.first)
+            Tok(v, m.range.first, m.value.replace(",", ""))
         }.toList()
+        val decimalToks = allNumToks.filter {  it.rawDigits.contains('.') }
+        val toks = decimalToks.ifEmpty { allNumToks }
+        if (decimalToks.isNotEmpty() && allNumToks.size > decimalToks.size) {
+            allNumToks.filter { !it.rawDigits.contains('.') }.forEach { t ->
+                AppLogger.d(IMPORT_TAG, "  CC: skipped integer '${t.rawDigits}' — decimal tokens present")
+            }
+        }
 
         if (toks.isEmpty()) return null
 
