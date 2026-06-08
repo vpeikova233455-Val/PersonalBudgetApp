@@ -259,17 +259,33 @@ class FileParserService @Inject constructor(
                 val headerRowIndex = findHeaderRow(sheet)
                 val headerRow = sheet.getRow(headerRowIndex)
                 val headers = headerRow?.map { cellText(it) } ?: emptyList()
-                val mapping = detectColumnMapping(headers)
 
-                if (!mapping.hasEnoughColumns()) continue
-
-                for (rowIndex in (headerRowIndex + 1)..sheet.lastRowNum) {
-                    val row = sheet.getRow(rowIndex) ?: continue
-                    if (row.physicalNumberOfCells == 0) continue
-                    try {
-                        val parsed = parseExcelRow(row, mapping)
-                        if (parsed != null) transactions.add(parsed)
-                    } catch (_: Exception) { }
+                if (isCreditCardFormat(headers)) {
+                    // Credit card statement: every row is an EXPENSE;
+                    // use merchant + charge columns only, ignore everything else.
+                    val ccMapping = detectCreditCardMapping(headers)
+                    if (!ccMapping.hasEnoughColumns()) continue
+                    for (rowIndex in (headerRowIndex + 1)..sheet.lastRowNum) {
+                        val row = sheet.getRow(rowIndex) ?: continue
+                        if (row.physicalNumberOfCells == 0) continue
+                        try {
+                            val cells = (0 until row.lastCellNum).map { i -> cellText(row.getCell(i)) }
+                            val parsed = parseCreditCardRow(cells, ccMapping)
+                            if (parsed != null) transactions.add(parsed)
+                        } catch (_: Exception) { }
+                    }
+                } else {
+                    // Bank account statement
+                    val mapping = detectColumnMapping(headers)
+                    if (!mapping.hasEnoughColumns()) continue
+                    for (rowIndex in (headerRowIndex + 1)..sheet.lastRowNum) {
+                        val row = sheet.getRow(rowIndex) ?: continue
+                        if (row.physicalNumberOfCells == 0) continue
+                        try {
+                            val parsed = parseExcelRow(row, mapping)
+                            if (parsed != null) transactions.add(parsed)
+                        } catch (_: Exception) { }
+                    }
                 }
             }
 
@@ -296,7 +312,8 @@ class FileParserService @Inject constructor(
                 DESC_KEYWORDS.any { h.contains(it) } ||
                 AMOUNT_KEYWORDS.any { h.contains(it) } ||
                 DEBIT_KEYWORDS.any { h.contains(it) } ||
-                CREDIT_KEYWORDS.any { h.contains(it) }
+                CREDIT_KEYWORDS.any { h.contains(it) } ||
+                CC_MERCHANT_KEYWORDS.any { h.contains(it) }
             }
             if (score >= 2) return i
         }
@@ -441,17 +458,28 @@ class FileParserService @Inject constructor(
             if (allRows.isEmpty()) return FileParseResult.Error("File is empty")
 
             val headerRow = allRows[0].toList()
-            val mapping = detectColumnMapping(headerRow)
-
-            if (!mapping.hasEnoughColumns())
-                return FileParseResult.Error("Could not identify transaction columns in this file")
-
             val transactions = mutableListOf<ParsedTransaction>()
-            for (i in 1 until allRows.size) {
-                try {
-                    val parsed = parseRowData(allRows[i].toList(), mapping)
-                    if (parsed != null) transactions.add(parsed)
-                } catch (_: Exception) { }
+
+            if (isCreditCardFormat(headerRow)) {
+                val ccMapping = detectCreditCardMapping(headerRow)
+                if (!ccMapping.hasEnoughColumns())
+                    return FileParseResult.Error("Could not identify transaction columns in this file")
+                for (i in 1 until allRows.size) {
+                    try {
+                        val parsed = parseCreditCardRow(allRows[i].toList(), ccMapping)
+                        if (parsed != null) transactions.add(parsed)
+                    } catch (_: Exception) { }
+                }
+            } else {
+                val mapping = detectColumnMapping(headerRow)
+                if (!mapping.hasEnoughColumns())
+                    return FileParseResult.Error("Could not identify transaction columns in this file")
+                for (i in 1 until allRows.size) {
+                    try {
+                        val parsed = parseRowData(allRows[i].toList(), mapping)
+                        if (parsed != null) transactions.add(parsed)
+                    } catch (_: Exception) { }
+                }
             }
 
             if (transactions.isEmpty())
@@ -462,6 +490,53 @@ class FileParserService @Inject constructor(
         } catch (e: Exception) {
             FileParseResult.Error("Failed to parse CSV: ${e.message}")
         }
+    }
+
+    // ── Credit card format detection and parsing ─────────────────────────────
+
+    // Returns true if the header row contains at least one credit-card-specific
+    // column name that does not appear in bank account statements.
+    private fun isCreditCardFormat(headers: List<String>): Boolean {
+        val lower = headers.map { it.trim().lowercase() }
+        return CC_SIGNATURE_KEYWORDS.any { sig -> lower.any { it.contains(sig.lowercase()) } }
+    }
+
+    // Maps the three columns we care about in a CC statement.
+    // Keywords are in priority order: the first keyword that matches a header wins,
+    // ensuring "סכום החיוב" is chosen over generic "סכום" when both are present.
+    private fun detectCreditCardMapping(headers: List<String>): CreditCardMapping {
+        fun bestCol(keywords: List<String>): Int? {
+            for (kw in keywords) {
+                val idx = headers.indexOfFirst { it.trim().lowercase().contains(kw.lowercase()) }
+                if (idx >= 0) return idx
+            }
+            return null
+        }
+        return CreditCardMapping(
+            dateColumn     = bestCol(CC_DATE_KEYWORDS),
+            merchantColumn = bestCol(CC_MERCHANT_KEYWORDS),
+            chargeColumn   = bestCol(CC_CHARGE_KEYWORDS)
+        )
+    }
+
+    // Parses a single credit card statement row.  Every row is an EXPENSE —
+    // no income/credit logic applies.  Only merchant name + charge amount are used.
+    private fun parseCreditCardRow(cells: List<String>, mapping: CreditCardMapping): ParsedTransaction? {
+        val merchant = mapping.merchantColumn
+            ?.let { cells.getOrNull(it)?.trim() }
+            ?.takeIf { it.isNotBlank() && !isSummaryRow(it) }
+            ?: return null
+        val amtStr = mapping.chargeColumn?.let { cells.getOrNull(it)?.trim() } ?: return null
+        val amount = parseAmount(amtStr) ?: return null
+        if (amount == 0.0) return null
+        val date = parseDate(mapping.dateColumn?.let { cells.getOrNull(it) })
+        return ParsedTransaction(
+            description = merchant,
+            amount      = amount,
+            date        = date,
+            type        = TransactionType.EXPENSE,
+            rawData     = cells.joinToString(" | ")
+        )
     }
 
     // ── Column detection ──────────────────────────────────────────────────────
@@ -738,6 +813,35 @@ class FileParserService @Inject constructor(
         )
         private val ALWAYS_INCOME_DESC_PATTERNS = listOf<String>()
 
+        // ── Credit card statement column keywords ────────────────────────────────
+        // A file is identified as a credit card statement when any header contains
+        // one of these signature terms (none appear in bank account statements).
+        private val CC_SIGNATURE_KEYWORDS = listOf(
+            "בית העסק", "שם בית עסק",          // merchant column
+            "תאריך העסקה", "תאריך פעולה", "תאריך רכישה",  // CC-specific date
+            "סכום החיוב", "סכום לחיוב"          // CC-specific charge amount
+        )
+        // Transaction date column — CC-specific names first, generic "תאריך" as fallback
+        private val CC_DATE_KEYWORDS = listOf(
+            "תאריך העסקה", "תאריך פעולה", "תאריך רכישה",
+            "transaction date", "purchase date",
+            "תאריך"
+        )
+        // Merchant / store name column — unique to credit card exports
+        private val CC_MERCHANT_KEYWORDS = listOf(
+            "שם בית עסק", "בית העסק", "בית עסק",
+            "merchant name", "merchant", "retailer", "vendor", "store name"
+        )
+        // Charge amount column — ordered most-specific first so "סכום החיוב" (charge
+        // in ILS) wins over "סכום עסקה" (original-currency transaction amount).
+        private val CC_CHARGE_KEYWORDS = listOf(
+            "סכום החיוב", "סכום לחיוב", "סכום חיוב",
+            "חיוב בש\"ח", "סכום בש\"ח",
+            "charge amount", "amount charged", "billing amount",
+            "סכום עסקה",
+            "סכום", "amount"
+        )
+
         private val SUMMARY_KEYWORDS = listOf(
             // English
             "total", "subtotal", "grand total", "balance", "opening", "closing",
@@ -766,6 +870,16 @@ data class ColumnMapping(
     fun hasEnoughColumns() =
         descriptionColumn != null &&
         (amountColumn != null || debitColumn != null || creditColumn != null)
+}
+
+// Minimal mapping for credit card statements: date + merchant + charge amount.
+// Everything else in the file is ignored.
+data class CreditCardMapping(
+    val dateColumn: Int? = null,
+    val merchantColumn: Int? = null,
+    val chargeColumn: Int? = null
+) {
+    fun hasEnoughColumns() = merchantColumn != null && chargeColumn != null
 }
 
 data class ParsedTransaction(

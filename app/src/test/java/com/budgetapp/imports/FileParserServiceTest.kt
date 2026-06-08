@@ -2,6 +2,7 @@ package com.budgetapp.imports
 
 import android.content.Context
 import com.budgetapp.data.remote.gemini.ColumnMapping
+import com.budgetapp.data.remote.gemini.CreditCardMapping
 import com.budgetapp.data.remote.gemini.FileParserService
 import com.budgetapp.data.remote.gemini.ParsedTransaction
 import com.budgetapp.data.remote.gemini.TransactionType
@@ -361,5 +362,115 @@ class FileParserServiceTest {
         val tx = parse(listOf("Diners Gold", "600.00"), mapping)
         assertNotNull(tx)
         assertEquals(TransactionType.EXPENSE, tx!!.type)
+    }
+
+    // ── Credit card format detection ───────────────────────────────────────────
+
+    private val isCreditCardFormat = FileParserService::class.java
+        .getDeclaredMethod("isCreditCardFormat", List::class.java)
+        .also { it.isAccessible = true }
+    private val detectCreditCardMappingMethod = FileParserService::class.java
+        .getDeclaredMethod("detectCreditCardMapping", List::class.java)
+        .also { it.isAccessible = true }
+    private val parseCreditCardRowMethod = FileParserService::class.java
+        .getDeclaredMethod("parseCreditCardRow", List::class.java, CreditCardMapping::class.java)
+        .also { it.isAccessible = true }
+
+    private fun isCC(headers: List<String>) =
+        isCreditCardFormat.invoke(service, headers) as Boolean
+    private fun detectCC(headers: List<String>) =
+        detectCreditCardMappingMethod.invoke(service, headers) as CreditCardMapping
+    private fun parseCC(cells: List<String>, mapping: CreditCardMapping) =
+        parseCreditCardRowMethod.invoke(service, cells, mapping) as? ParsedTransaction
+
+    @Test
+    fun `Hebrew CC headers are detected as credit card format`() {
+        assertTrue(isCC(listOf("תאריך העסקה", "בית העסק", "סכום עסקה", "מטבע", "סכום החיוב")))
+    }
+
+    @Test
+    fun `שם בית עסק is detected as credit card format`() {
+        assertTrue(isCC(listOf("תאריך", "שם בית עסק", "סכום", "מטבע")))
+    }
+
+    @Test
+    fun `bank statement headers are NOT detected as credit card format`() {
+        assertFalse(isCC(listOf("תאריך", "סוג תנועה", "זכות/חובה", "יתרה בש\"ח")))
+    }
+
+    @Test
+    fun `standard CC column mapping — finds correct columns`() {
+        val mapping = detectCC(listOf("תאריך העסקה", "שם בית עסק", "סכום עסקה", "מטבע", "סכום החיוב", "תאריך חיוב"))
+        assertEquals("date column", 0, mapping.dateColumn)
+        assertEquals("merchant column", 1, mapping.merchantColumn)
+        assertEquals("charge column must be 'סכום החיוב' not 'סכום עסקה'", 4, mapping.chargeColumn)
+    }
+
+    @Test
+    fun `CC mapping prefers סכום החיוב over סכום עסקה`() {
+        // Both contain "סכום"; the more specific "סכום החיוב" must win.
+        val mapping = detectCC(listOf("שם בית עסק", "סכום עסקה", "מטבע", "סכום החיוב"))
+        assertEquals(3, mapping.chargeColumn)
+        assertNotEquals("should not pick the foreign-currency column", 1, mapping.chargeColumn)
+    }
+
+    @Test
+    fun `CC row is always EXPENSE`() {
+        val mapping = CreditCardMapping(dateColumn = 0, merchantColumn = 1, chargeColumn = 2)
+        val tx = parseCC(listOf("01/05/2026", "MAE", "120.00"), mapping)
+        assertNotNull(tx)
+        assertEquals(TransactionType.EXPENSE, tx!!.type)
+        assertEquals(120.0, tx.amount, 0.001)
+        assertEquals("MAE", tx.description)
+    }
+
+    @Test
+    fun `CC row uses merchant name as description`() {
+        val mapping = CreditCardMapping(merchantColumn = 0, chargeColumn = 1)
+        val tx = parseCC(listOf("עיריית קריית אונו", "350.00"), mapping)
+        assertNotNull(tx)
+        assertEquals("עיריית קריית אונו", tx!!.description)
+        assertEquals(TransactionType.EXPENSE, tx.type)
+    }
+
+    @Test
+    fun `גולד מסטרקרד in CC file is EXPENSE`() {
+        val mapping = CreditCardMapping(merchantColumn = 0, chargeColumn = 1)
+        val tx = parseCC(listOf("גולד מסטרקרד", "1800.00"), mapping)
+        assertNotNull(tx)
+        assertEquals(TransactionType.EXPENSE, tx!!.type)
+        assertEquals(1800.0, tx.amount, 0.001)
+    }
+
+    @Test
+    fun `העברה בBIT in CC file is EXPENSE`() {
+        val mapping = CreditCardMapping(merchantColumn = 0, chargeColumn = 1)
+        val tx = parseCC(listOf("העברה בBIT", "500.00"), mapping)
+        assertNotNull(tx)
+        assertEquals(TransactionType.EXPENSE, tx!!.type)
+    }
+
+    @Test
+    fun `הפי האואר in CC file is EXPENSE`() {
+        val mapping = CreditCardMapping(merchantColumn = 0, chargeColumn = 1)
+        val tx = parseCC(listOf("הפי האואר", "89.90"), mapping)
+        assertNotNull(tx)
+        assertEquals(TransactionType.EXPENSE, tx!!.type)
+        assertEquals(89.9, tx.amount, 0.001)
+    }
+
+    @Test
+    fun `CC row ignores other columns — amount comes only from chargeColumn`() {
+        // Columns: merchant, original-currency amount, currency, ILS charge, billing date
+        val mapping = CreditCardMapping(dateColumn = 4, merchantColumn = 0, chargeColumn = 3)
+        val tx = parseCC(listOf("Coffee shop", "5.00", "USD", "18.50", "05/2026"), mapping)
+        assertNotNull(tx)
+        assertEquals(18.5, tx!!.amount, 0.001)  // ILS charge, not USD amount
+    }
+
+    @Test
+    fun `CC blank charge row is skipped`() {
+        val mapping = CreditCardMapping(merchantColumn = 0, chargeColumn = 1)
+        assertNull(parseCC(listOf("סיכום חשבון", ""), mapping))
     }
 }
