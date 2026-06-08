@@ -118,7 +118,7 @@ class TransactionRepositoryImpl @Inject constructor(
         put("id", id); put("userId", userId); put("type", type.name); put("amount", amount)
         put("description", description); put("categoryId", categoryId); put("date", date)
         put("isRecurring", isRecurring); put("recurringId", recurringId); put("deviceId", deviceId)
-        put("firestoreId", firestoreId); put("bankName", bankName)
+        put("firestoreId", firestoreId); put("bankName", bankName); put("notes", notes)
     }.toString()
 
     private fun buildUpdateSnapshot(old: String, new: String) =

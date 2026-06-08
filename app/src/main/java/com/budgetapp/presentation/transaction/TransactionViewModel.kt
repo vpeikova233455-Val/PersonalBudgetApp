@@ -22,6 +22,7 @@ data class TransactionFormState(
     val description: String = "",
     val selectedCategory: Category? = null,
     val date: Long = System.currentTimeMillis(),
+    val notes: String = "",
     val amountError: String? = null,
     val descriptionError: String? = null,
     val categoryError: String? = null,
@@ -55,12 +56,13 @@ class TransactionViewModel @Inject constructor(
                 if (transaction != null) {
                     _formState.update {
                         it.copy(
-                            id = transaction.id,
-                            type = transaction.type,
-                            amount = transaction.amount.toString(),
-                            description = transaction.description,
+                            id               = transaction.id,
+                            type             = transaction.type,
+                            amount           = transaction.amount.toString(),
+                            description      = transaction.description,
                             selectedCategory = transaction.category,
-                            date = transaction.date
+                            date             = transaction.date,
+                            notes            = transaction.notes ?: ""
                         )
                     }
                 }
@@ -107,6 +109,10 @@ class TransactionViewModel @Inject constructor(
         _formState.update { it.copy(date = date) }
     }
 
+    fun onNotesChange(notes: String) {
+        _formState.update { it.copy(notes = notes) }
+    }
+
     fun saveTransaction() {
         if (!validateForm()) return
 
@@ -118,13 +124,14 @@ class TransactionViewModel @Inject constructor(
                     ?: throw Exception("User not logged in")
 
                 val transaction = Transaction(
-                    id = _formState.value.id,
-                    userId = userId,
-                    type = _formState.value.type,
-                    amount = _formState.value.amount.toDouble(),
+                    id          = _formState.value.id,
+                    userId      = userId,
+                    type        = _formState.value.type,
+                    amount      = _formState.value.amount.toDouble(),
                     description = _formState.value.description,
-                    category = _formState.value.selectedCategory!!,
-                    date = _formState.value.date
+                    category    = _formState.value.selectedCategory!!,
+                    date        = _formState.value.date,
+                    notes       = _formState.value.notes.ifBlank { null }
                 )
 
                 transactionRepository.insertTransaction(transaction)
@@ -149,15 +156,16 @@ class TransactionViewModel @Inject constructor(
                     ?: throw Exception("User not logged in")
 
                 val transaction = Transaction(
-                    id = _formState.value.id,
-                    userId = userId,
-                    type = _formState.value.type,
-                    amount = _formState.value.amount.toDoubleOrNull() ?: 0.0,
+                    id          = _formState.value.id,
+                    userId      = userId,
+                    type        = _formState.value.type,
+                    amount      = _formState.value.amount.toDoubleOrNull() ?: 0.0,
                     description = _formState.value.description,
-                    category = _formState.value.selectedCategory
+                    category    = _formState.value.selectedCategory
                         ?: categories.value.firstOrNull()
                         ?: throw Exception("No category selected"),
-                    date = _formState.value.date
+                    date        = _formState.value.date,
+                    notes       = _formState.value.notes.ifBlank { null }
                 )
 
                 transactionRepository.deleteTransaction(transaction)

@@ -227,6 +227,12 @@ fun EditTransactionScreen(
                 )
             }
 
+            // Notes — collapsible
+            NotesField(
+                notes    = formState.notes,
+                onChange = viewModel::onNotesChange
+            )
+
             Spacer(modifier = Modifier.weight(1f))
 
             // Save Button

@@ -20,5 +20,6 @@ data class TransactionEntity(
     val lastModifiedTimestamp: Long = System.currentTimeMillis(),
     val deviceId: String,
     val firestoreId: String? = null,
-    val bankName: String? = null
+    val bankName: String? = null,
+    val notes: String? = null
 )

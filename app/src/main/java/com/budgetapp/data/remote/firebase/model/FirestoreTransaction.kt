@@ -13,5 +13,6 @@ data class FirestoreTransaction(
     @PropertyName("isRecurring") val isRecurring: Boolean = false,
     @PropertyName("recurringId") val recurringId: String? = null,
     @PropertyName("lastModifiedTimestamp") val lastModifiedTimestamp: Long = 0,
-    @PropertyName("deviceId") val deviceId: String = ""
+    @PropertyName("deviceId") val deviceId: String = "",
+    @PropertyName("notes") val notes: String? = null
 )

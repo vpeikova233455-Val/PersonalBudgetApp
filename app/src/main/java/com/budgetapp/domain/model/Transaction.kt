@@ -12,5 +12,6 @@ data class Transaction(
     val date: Long,
     val isRecurring: Boolean = false,
     val recurringId: String? = null,
-    val bankName: String? = null
+    val bankName: String? = null,
+    val notes: String? = null
 )

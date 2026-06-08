@@ -16,7 +16,8 @@ fun TransactionEntity.toFirestore(): FirestoreTransaction {
         isRecurring = isRecurring,
         recurringId = recurringId,
         lastModifiedTimestamp = lastModifiedTimestamp,
-        deviceId = deviceId
+        deviceId = deviceId,
+        notes = notes
     )
 }
 
@@ -34,7 +35,8 @@ fun FirestoreTransaction.toEntity(syncStatus: SyncStatus = SyncStatus.SYNCED): T
         syncStatus = syncStatus,
         lastModifiedTimestamp = lastModifiedTimestamp,
         deviceId = deviceId,
-        firestoreId = id
+        firestoreId = id,
+        notes = notes
     )
 }
 

@@ -10,10 +10,12 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.Notes
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -307,6 +309,12 @@ fun AddTransactionScreen(
                     )
                 }
 
+                // Notes — collapsible, shown only on demand
+                NotesField(
+                    notes    = formState.notes,
+                    onChange = viewModel::onNotesChange
+                )
+
                 Spacer(modifier = Modifier.height(8.dp))
 
                 // Save button
@@ -325,6 +333,55 @@ fun AddTransactionScreen(
                 }
             }
         }
+    }
+}
+
+// Shared by AddTransactionScreen and EditTransactionScreen
+@Composable
+fun NotesField(notes: String, onChange: (String) -> Unit) {
+    var expanded by remember { mutableStateOf(notes.isNotBlank()) }
+
+    // Auto-expand when an existing note is loaded asynchronously
+    LaunchedEffect(notes) { if (notes.isNotBlank() && !expanded) expanded = true }
+
+    if (!expanded) {
+        TextButton(
+            onClick = { expanded = true },
+            contentPadding = PaddingValues(horizontal = 0.dp, vertical = 0.dp)
+        ) {
+            Icon(
+                Icons.Default.Notes,
+                contentDescription = null,
+                modifier = Modifier.size(16.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(
+                "Add note",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+
+    AnimatedVisibility(visible = expanded) {
+        OutlinedTextField(
+            value = notes,
+            onValueChange = onChange,
+            label = { Text("Note (optional)") },
+            trailingIcon = {
+                IconButton(onClick = { onChange(""); expanded = false }) {
+                    Icon(
+                        Icons.Default.Close,
+                        contentDescription = "Remove note",
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            },
+            maxLines = 4,
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp)
+        )
     }
 }
 
