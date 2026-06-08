@@ -117,94 +117,89 @@ class FileParserService @Inject constructor(
             (AMOUNT_KEYWORDS + DEBIT_KEYWORDS + CREDIT_KEYWORDS).any { l.contains(it) }
         }
 
-        val header  = if (headerIdx >= 0) lines[headerIdx] else null
-        val layout  = header?.let { buildLayout(it) }
+        val header   = if (headerIdx >= 0) lines[headerIdx] else null
+        val layout   = header?.let { buildBankLayout(it) }
         val startIdx = if (headerIdx >= 0) headerIdx + 1 else 0
 
         return lines.drop(startIdx)
             .filter { !isSummaryRow(it) }
-            .mapNotNull { parsePdfLine(it, layout, header) }
+            .mapNotNull { parseBankStatementLine(it, layout) }
     }
 
-    // Stores the character-offset of each column inside the header string.
-    private data class PdfColumnLayout(
-        val datePos:    Int,   // char offset of תאריך / date keyword      (-1 = absent)
-        val descPos:    Int,   // char offset of סוג תנועה / desc keyword   (-1 = absent)
-        val debitPos:   Int,   // char offset of חובה / debit keyword       (-1 = absent)
-        val creditPos:  Int,   // char offset of זכות / credit keyword      (-1 = absent)
-        val balancePos: Int    // char offset of יתרה / balance keyword     (-1 = absent)
+    // Stores normalised (0.0–1.0) column positions derived from the header string.
+    // Relative positions let us compare header offsets against token offsets in
+    // data rows that may be a different character length.
+    private data class BankLayout(
+        val debitRel:     Double = -1.0,  // חובה / debit      (-1 = absent)
+        val creditRel:    Double = -1.0,  // זכות / credit     (-1 = absent)
+        val balanceRel:   Double = -1.0,  // יתרה / balance    (-1 = absent)
+        val referenceRel: Double = -1.0   // אסמכתה / ref no   (-1 = absent)
     ) {
-        val hasDate    get() = datePos   >= 0
-        val hasDesc    get() = descPos   >= 0
-        val hasDebit   get() = debitPos  >= 0
-        val hasCredit  get() = creditPos >= 0
-        val hasBalance get() = balancePos >= 0
+        val hasDebit    get() = debitRel    >= 0
+        val hasCredit   get() = creditRel   >= 0
+        val hasBalance  get() = balanceRel  >= 0
+        val hasRef      get() = referenceRel >= 0
     }
 
-    private fun buildLayout(header: String): PdfColumnLayout {
-        fun firstPos(keywords: List<String>): Int =
-            keywords.mapNotNull { kw ->
+    private fun buildBankLayout(header: String): BankLayout {
+        val hLen = header.length.coerceAtLeast(1).toDouble()
+        fun rel(keywords: List<String>): Double {
+            val pos = keywords.mapNotNull { kw ->
                 val idx = header.indexOf(kw)
                 if (idx >= 0) idx else null
-            }.minOrNull() ?: -1
-
-        return PdfColumnLayout(
-            datePos    = firstPos(DATE_KEYWORDS),
-            descPos    = firstPos(DESC_KEYWORDS),
-            debitPos   = firstPos(DEBIT_KEYWORDS),
-            creditPos  = firstPos(CREDIT_KEYWORDS),
-            balancePos = firstPos(BALANCE_KEYWORDS)
+            }.minOrNull() ?: return -1.0
+            return pos / hLen
+        }
+        return BankLayout(
+            debitRel     = rel(DEBIT_KEYWORDS),
+            creditRel    = rel(CREDIT_KEYWORDS),
+            balanceRel   = rel(BALANCE_KEYWORDS),
+            referenceRel = rel(REFERENCE_KEYWORDS)
         )
     }
 
-    private fun parsePdfLine(line: String, layout: PdfColumnLayout?, header: String?): ParsedTransaction? {
-        // Find ALL date patterns on this line; the first one is the transaction date.
-        // Some PDFs include both a transaction date and a billing date on the same row —
-        // we must exclude both from number picking so the month digit (e.g. "05" from
-        // "05/06/2026") is never mistaken for a monetary amount.
+    // Parses one data row from a bank-account PDF statement.
+    // Only three columns matter: date (תאריך), description (סוג תנועה), and
+    // debit/credit amount (חובה / זכות). Balance (יתרה) and reference (אסמכתה)
+    // columns are identified by position and discarded so their numbers never
+    // become the transaction amount.
+    private fun parseBankStatementLine(line: String, layout: BankLayout?): ParsedTransaction? {
         val allDates = PDF_DATE_RE.findAll(line).toList()
         if (allDates.isEmpty()) return null
-        val date = parseDate(allDates.first().value)
-        val allDateRanges = allDates.map { it.range }
 
-        // Collect numeric tokens, skipping:
-        //   (a) any match that overlaps ANY date on the line
-        //   (b) pure integers whose digit-only form is ≥ 6 chars (reference/account numbers)
-        data class Tok(val v: Double, val pos: Int, val raw: String)
+        val date          = parseDate(allDates.first().value)
+        val allDateRanges = allDates.map { it.range }
+        val lLen          = line.length.coerceAtLeast(1).toDouble()
+
+        data class Tok(val v: Double, val rel: Double, val rawDigits: String)
         val toks = PDF_NUM_FINDER.findAll(line).mapNotNull { m ->
             if (allDateRanges.any { r -> m.range.first in r || m.range.last in r }) return@mapNotNull null
-            val raw = m.value
-            val digits = raw.replace(",", "")
-            if (digits.length >= 6 && !digits.contains('.')) return@mapNotNull null
-            val v = parseAmount(raw) ?: return@mapNotNull null
+            val v = parseAmount(m.value) ?: return@mapNotNull null
             if (v <= 0) return@mapNotNull null
-            Tok(v, m.range.first, raw)
+            Tok(v, m.range.first / lLen, m.value.replace(",", ""))
         }.toList()
 
         if (toks.isEmpty()) return null
 
-        // ── Map tokens to debit / credit / balance columns ───────────────────
         val amount: Double
         val type: TransactionType
 
-        if (layout != null && layout.hasDebit && layout.hasCredit && header != null) {
-            val hLen = header.length.coerceAtLeast(1).toDouble()
-            val lLen = line.length.coerceAtLeast(1).toDouble()
-
-            val debitRel   = layout.debitPos  / hLen
-            val creditRel  = layout.creditPos / hLen
-            val balanceRel = if (layout.hasBalance) layout.balancePos / hLen else -1.0
-
+        if (layout != null && (layout.hasDebit || layout.hasCredit)) {
+            // Assign every numeric token to the nearest layout column by relative position.
+            // Tokens that land on balance or reference columns are discarded — this handles
+            // both explicit reference numbers (e.g. "789456") and large round amounts like
+            // "100,000" without relying on a digit-length heuristic.
             data class Tagged(val tok: Tok, val col: String)
             val tagged = toks.map { t ->
-                val r = t.pos / lLen
-                val dDist = kotlin.math.abs(r - debitRel)
-                val cDist = kotlin.math.abs(r - creditRel)
-                val bDist = if (balanceRel >= 0) kotlin.math.abs(r - balanceRel) else Double.MAX_VALUE
-                Tagged(t, when (minOf(dDist, cDist, bDist)) {
+                val dDist = if (layout.hasDebit)    kotlin.math.abs(t.rel - layout.debitRel)     else Double.MAX_VALUE
+                val cDist = if (layout.hasCredit)   kotlin.math.abs(t.rel - layout.creditRel)    else Double.MAX_VALUE
+                val bDist = if (layout.hasBalance)  kotlin.math.abs(t.rel - layout.balanceRel)   else Double.MAX_VALUE
+                val rDist = if (layout.hasRef)      kotlin.math.abs(t.rel - layout.referenceRel) else Double.MAX_VALUE
+                Tagged(t, when (minOf(dDist, cDist, bDist, rDist)) {
                     dDist -> "debit"
                     cDist -> "credit"
-                    else  -> "balance"
+                    bDist -> "balance"
+                    else  -> "ref"
                 })
             }
 
@@ -212,35 +207,33 @@ class FileParserService @Inject constructor(
             val creditTok = tagged.filter { it.col == "credit" }.maxByOrNull { it.tok.v }
 
             when {
-                debitTok  != null && (creditTok == null || creditTok.tok.v < 0.01) ->
+                (debitTok?.tok?.v  ?: 0.0) > 0.01 && (creditTok?.tok?.v ?: 0.0) < 0.01 ->
+                    { amount = debitTok!!.tok.v;  type = TransactionType.EXPENSE }
+                (creditTok?.tok?.v ?: 0.0) > 0.01 && (debitTok?.tok?.v  ?: 0.0) < 0.01 ->
+                    { amount = creditTok!!.tok.v; type = TransactionType.INCOME  }
+                debitTok != null ->
                     { amount = debitTok.tok.v;  type = TransactionType.EXPENSE }
-                creditTok != null && (debitTok  == null || debitTok.tok.v  < 0.01) ->
+                creditTok != null ->
                     { amount = creditTok.tok.v; type = TransactionType.INCOME  }
-                debitTok  != null ->
-                    { amount = debitTok.tok.v;  type = TransactionType.EXPENSE }
                 else -> return null
             }
         } else {
-            // No column layout — drop last token (running balance) and take smallest remaining
-            val txToks = if (toks.size >= 2) toks.dropLast(1) else toks
-            val chosen = txToks.minByOrNull { it.v } ?: return null
-            amount = chosen.v
-            type = TransactionType.EXPENSE
+            // No column layout: fall back to digit-length heuristic to filter reference
+            // numbers (typically 6+ digit integers), then drop the rightmost token
+            // (running balance) and take the smallest remaining value.
+            val filtered = toks.filterNot { t -> t.rawDigits.length >= 6 && !t.rawDigits.contains('.') }
+            val txToks   = if (filtered.size >= 2) filtered.dropLast(1) else filtered
+            amount = txToks.minByOrNull { it.v }?.v ?: return null
+            type   = TransactionType.EXPENSE
         }
 
         if (amount == 0.0) return null
 
-        // ── Build description ────────────────────────────────────────────────
-        // Mark every character that belongs to ANY date or ANY numeric token as
-        // "remove" using a boolean array, then rebuild the string in one pass.
-        // This avoids the index-shift bugs that occur with sequential removeRange calls.
         val keep = BooleanArray(line.length) { true }
         allDateRanges.forEach { r -> r.forEach { if (it < line.length) keep[it] = false } }
-        PDF_NUM_FINDER.findAll(line).forEach { m ->
-            m.range.forEach { if (it < line.length) keep[it] = false }
-        }
+        PDF_NUM_FINDER.findAll(line).forEach { m -> m.range.forEach { if (it < line.length) keep[it] = false } }
 
-        var desc = line.filterIndexed { i, _ -> keep[i] }
+        val desc = line.filterIndexed { i, _ -> keep[i] }
             .replace(Regex("[₪\$€£₽]|ILS|NIS|USD|EUR|RUB"), "")
             .replace(Regex("[|/\\\\]"), " ")
             .replace(Regex("\\s{2,}"), " ")
@@ -248,7 +241,13 @@ class FileParserService @Inject constructor(
 
         if (desc.isBlank() || isSummaryRow(desc)) return null
 
-        return ParsedTransaction(description = desc, amount = amount, date = date, type = overrideTypeByDescription(desc, type), rawData = line)
+        return ParsedTransaction(
+            description = desc,
+            amount      = amount,
+            date        = date,
+            type        = overrideTypeByDescription(desc, type),
+            rawData     = line
+        )
     }
 
     // ── Credit card PDF ───────────────────────────────────────────────────────
@@ -880,6 +879,12 @@ class FileParserService @Inject constructor(
         )
         private val BALANCE_KEYWORDS = listOf(
             "balance", "יתרה", "остаток", "баланс"
+        )
+        private val REFERENCE_KEYWORDS = listOf(
+            // Hebrew — primary reference/document column in Israeli bank statements
+            "אסמכתה", "מסמך",
+            // English
+            "reference", "ref no", "ref.", "cheque no", "check no", "voucher"
         )
         // Description-based type overrides — applied after column detection.
         // Use these for transaction labels that are unambiguous regardless of which column

@@ -580,4 +580,107 @@ class FileParserServiceTest {
         val txs = extractCCFromText(text)
         assertEquals("Non-CC text must produce no results", 0, txs.size)
     }
+
+    // ── Bank PDF row parser ────────────────────────────────────────────────────
+    //
+    // The bank PDF parser assigns numeric tokens to columns by comparing their
+    // relative position in the data-row string against the relative position of
+    // each column keyword in the header string.  For this to work in unit tests
+    // the strings must be column-aligned — i.e. each value must sit at the same
+    // relative character offset as its header keyword.  bankHeader() and bankRow()
+    // build fixed-width columns (date=12, desc=18, ref=9, debit=11, credit=11,
+    // balance=rest) so the relative positions match exactly.
+
+    private val extractBankFromTextMethod = FileParserService::class.java
+        .getDeclaredMethod("extractTransactionsFromText", String::class.java)
+        .also { it.isAccessible = true }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun extractBankFromText(text: String): List<ParsedTransaction> =
+        extractBankFromTextMethod.invoke(service, text) as List<ParsedTransaction>
+
+    private fun bankHeader(): String =
+        "תאריך".padEnd(12) + "סוג תנועה".padEnd(18) + "אסמכתה".padEnd(9) +
+        "חובה".padEnd(11) + "זכות".padEnd(11) + "יתרה"
+
+    private fun bankRow(date: String, desc: String, ref: String,
+                        debit: String, credit: String, balance: String): String =
+        date.padEnd(12) + desc.padEnd(18) + ref.padEnd(9) +
+        debit.padEnd(11) + credit.padEnd(11) + balance
+
+    @Test
+    fun `bank PDF - credit row (זכות) is INCOME`() {
+        val text = bankHeader() + "\n" +
+            bankRow("01/06/2026", "משכורת", "789456", "", "15000.00", "30000.00")
+        val txs = extractBankFromText(text)
+        assertEquals(1, txs.size)
+        assertEquals(TransactionType.INCOME, txs[0].type)
+        assertEquals(15000.0, txs[0].amount, 0.001)
+    }
+
+    @Test
+    fun `bank PDF - debit row (חובה) is EXPENSE`() {
+        val text = bankHeader() + "\n" +
+            bankRow("03/06/2026", "קניות", "123456", "3500.00", "", "26500.00")
+        val txs = extractBankFromText(text)
+        assertEquals(1, txs.size)
+        assertEquals(TransactionType.EXPENSE, txs[0].type)
+        assertEquals(3500.0, txs[0].amount, 0.001)
+    }
+
+    @Test
+    fun `bank PDF - reference number is excluded, not chosen as amount`() {
+        // Reference 789012 in the אסמכתה column must be excluded; 250.00 is the debit amount
+        val text = bankHeader() + "\n" +
+            bankRow("05/06/2026", "סופר", "789012", "250.00", "", "26250.00")
+        val txs = extractBankFromText(text)
+        assertEquals(1, txs.size)
+        assertEquals(250.0, txs[0].amount, 0.001)
+        assertEquals(TransactionType.EXPENSE, txs[0].type)
+    }
+
+    @Test
+    fun `bank PDF - large round amount without decimal is not filtered`() {
+        // 100000 has 6 stripped digits and no decimal — the old digit-length heuristic
+        // dropped it. With column-based exclusion it must be preserved.
+        val text = bankHeader() + "\n" +
+            bankRow("10/06/2026", "העברה", "456789", "", "100000", "250000")
+        val txs = extractBankFromText(text)
+        assertEquals(1, txs.size)
+        assertEquals(100000.0, txs[0].amount, 0.001)
+        assertEquals(TransactionType.INCOME, txs[0].type)
+    }
+
+    @Test
+    fun `bank PDF - balance is excluded, not chosen as amount`() {
+        val text = bankHeader() + "\n" +
+            bankRow("03/06/2026", "שירות", "111222", "3500.00", "", "26500.00")
+        val txs = extractBankFromText(text)
+        assertEquals(1, txs.size)
+        assertEquals(3500.0, txs[0].amount, 0.001)
+    }
+
+    @Test
+    fun `bank PDF - row without date is skipped`() {
+        val text = bankHeader() + "\n" +
+            "משכורת".padEnd(30) + "789456".padEnd(9) + "".padEnd(11) + "15000.00".padEnd(11) + "30000.00"
+        val txs = extractBankFromText(text)
+        assertEquals("Row without date must be skipped", 0, txs.size)
+    }
+
+    @Test
+    fun `bank PDF - all rows parsed correctly end to end`() {
+        val text = bankHeader() + "\n" +
+            bankRow("01/06/2026", "משכורת", "789456", "", "15000.00", "30000.00") + "\n" +
+            bankRow("03/06/2026", "קניות", "123456", "3500.00", "", "26500.00") + "\n" +
+            bankRow("05/06/2026", "חשמל", "654321", "250.00", "", "26250.00")
+        val txs = extractBankFromText(text)
+        assertEquals(3, txs.size)
+        assertEquals(TransactionType.INCOME,  txs[0].type)
+        assertEquals(15000.0, txs[0].amount, 0.001)
+        assertEquals(TransactionType.EXPENSE, txs[1].type)
+        assertEquals(3500.0,  txs[1].amount, 0.001)
+        assertEquals(TransactionType.EXPENSE, txs[2].type)
+        assertEquals(250.0,   txs[2].amount, 0.001)
+    }
 }
