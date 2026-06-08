@@ -661,11 +661,16 @@ class FileParserServiceTest {
     }
 
     @Test
-    fun `bank PDF - row without date is skipped`() {
+    fun `bank PDF - row without date is kept with null date`() {
+        // Rows that have an amount but no recognisable date are kept so they
+        // appear in the Review screen under "Unknown date". The user can approve
+        // or delete them; nothing is silently discarded before Review.
         val text = bankHeader() + "\n" +
             "משכורת".padEnd(30) + "789456".padEnd(9) + "".padEnd(11) + "15000.00".padEnd(11) + "30000.00"
         val txs = extractBankFromText(text)
-        assertEquals("Row without date must be skipped", 0, txs.size)
+        assertEquals("Row without date must still be extracted", 1, txs.size)
+        assertNull("Date should be null for a dateless row", txs[0].date)
+        assertEquals(15000.0, txs[0].amount, 0.001)
     }
 
     @Test

@@ -12,6 +12,7 @@ import com.budgetapp.data.local.database.dao.PendingTransactionDao
 import com.budgetapp.data.local.entity.ImportSource
 import com.budgetapp.data.local.entity.PendingTransactionEntity
 import com.budgetapp.data.local.entity.TransactionType as EntityTransactionType
+import com.budgetapp.core.util.AppLogger
 import com.budgetapp.data.remote.gemini.FileParseResult
 import com.budgetapp.data.remote.gemini.FileParserService
 import com.budgetapp.data.remote.gemini.GeminiOcrService
@@ -75,9 +76,12 @@ class FileImportViewModel @Inject constructor(
     }
 
     private fun showPreview(transactions: List<ParsedTransaction>) {
+        AppLogger.d("FileImport", "Parser returned ${transactions.size} rows")
         val months = groupByMonth(transactions)
+        val shownCount = months.sumOf { it.transactions.size }
+        AppLogger.d("FileImport", "Review screen will show $shownCount rows in ${months.size} groups (parser→review delta: ${transactions.size - shownCount})")
         if (months.isEmpty()) {
-            _state.value = FileImportState.Error("No transactions with recognisable dates found.")
+            _state.value = FileImportState.Error("No transactions found in this PDF.")
         } else {
             _state.value = FileImportState.Preview(months)
         }

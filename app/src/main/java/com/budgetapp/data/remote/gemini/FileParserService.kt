@@ -5,6 +5,7 @@ import android.net.Uri
 import com.opencsv.CSVReader
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.text.PDFTextStripper
+import com.budgetapp.core.util.AppLogger
 import dagger.hilt.android.qualifiers.ApplicationContext
 import org.apache.poi.ss.usermodel.Cell
 import org.apache.poi.ss.usermodel.CellType
@@ -86,7 +87,9 @@ class FileParserService @Inject constructor(
                 else extractTransactionsFromText(naturalText)
             } else emptyList()
 
+            AppLogger.d(IMPORT_TAG, "Sorted extraction: ${sortedTx.size} rows | Natural extraction: ${naturalTx.size} rows")
             val transactions = if (sortedTx.size >= naturalTx.size) sortedTx else naturalTx
+            AppLogger.d(IMPORT_TAG, "Using ${if (sortedTx.size >= naturalTx.size) "sorted" else "natural"}: ${transactions.size} transactions total")
 
             when {
                 transactions.isNotEmpty() -> FileParseResult.Success(transactions)
@@ -117,13 +120,25 @@ class FileParserService @Inject constructor(
             (AMOUNT_KEYWORDS + DEBIT_KEYWORDS + CREDIT_KEYWORDS).any { l.contains(it) }
         }
 
-        val header   = if (headerIdx >= 0) lines[headerIdx] else null
-        val layout   = header?.let { buildBankLayout(it) }
-        val startIdx = if (headerIdx >= 0) headerIdx + 1 else 0
+        val header    = if (headerIdx >= 0) lines[headerIdx] else null
+        val layout    = header?.let { buildBankLayout(it) }
+        val startIdx  = if (headerIdx >= 0) headerIdx + 1 else 0
+        val dataLines = lines.drop(startIdx)
 
-        return lines.drop(startIdx)
-            .filter { !isSummaryRow(it) }
-            .mapNotNull { parseBankStatementLine(it, layout) }
+        val result     = mutableListOf<ParsedTransaction>()
+        val discardLog = mutableListOf<Pair<String, String>>()
+
+        for (line in dataLines) {
+            val tx = parseBankStatementLine(line, layout, discardLog)
+            if (tx != null) result.add(tx)
+        }
+
+        AppLogger.d(IMPORT_TAG, "PDF extraction: ${lines.size} total lines, header at $headerIdx, ${dataLines.size} data lines → ${result.size} kept, ${discardLog.size} discarded")
+        discardLog.forEachIndexed { i, (ln, reason) ->
+            AppLogger.d(IMPORT_TAG, "  discard[$i] reason=$reason | ${ln.take(120)}")
+        }
+
+        return result
     }
 
     // Stores normalised (0.0–1.0) column positions derived from the header string.
@@ -163,11 +178,25 @@ class FileParserService @Inject constructor(
     // debit/credit amount (חובה / זכות). Balance (יתרה) and reference (אסמכתה)
     // columns are identified by position and discarded so their numbers never
     // become the transaction amount.
-    private fun parseBankStatementLine(line: String, layout: BankLayout?): ParsedTransaction? {
-        val allDates = PDF_DATE_RE.findAll(line).toList()
-        if (allDates.isEmpty()) return null
+    //
+    // Date is OPTIONAL — rows without a recognisable date are kept with date=null
+    // so they still appear in the Review screen (shown under "Unknown date").
+    // Nothing is silently dropped; every discard is recorded in discardLog.
+    private fun parseBankStatementLine(
+        line: String,
+        layout: BankLayout?,
+        discardLog: MutableList<Pair<String, String>> = mutableListOf()
+    ): ParsedTransaction? {
+        // Summary rows (totals, page headers, etc.) are the only hard filter before Review.
+        if (isSummaryRow(line)) {
+            val kw = SUMMARY_KEYWORDS.firstOrNull { line.lowercase().contains(it) } ?: "?"
+            discardLog.add(line to "summary keyword '$kw'")
+            return null
+        }
 
-        val date          = parseDate(allDates.first().value)
+        // Date is optional — null means "show as Unknown date" in the Review screen.
+        val allDates      = PDF_DATE_RE.findAll(line).toList()
+        val date          = allDates.firstOrNull()?.let { parseDate(it.value) }
         val allDateRanges = allDates.map { it.range }
         val lLen          = line.length.coerceAtLeast(1).toDouble()
 
@@ -179,7 +208,10 @@ class FileParserService @Inject constructor(
             Tok(v, m.range.first / lLen, m.value.replace(",", ""))
         }.toList()
 
-        if (toks.isEmpty()) return null
+        if (toks.isEmpty()) {
+            discardLog.add(line to "no numeric amount found")
+            return null
+        }
 
         val amount: Double
         val type: TransactionType
@@ -215,7 +247,20 @@ class FileParserService @Inject constructor(
                     { amount = debitTok.tok.v;  type = TransactionType.EXPENSE }
                 creditTok != null ->
                     { amount = creditTok.tok.v; type = TransactionType.INCOME  }
-                else -> return null
+                else -> {
+                    // All tokens were assigned to balance/reference columns by the proximity
+                    // logic. Fall back to the digit-length heuristic so the row isn't lost —
+                    // the user will see it in Review and can correct the amount if needed.
+                    val filtered = toks.filterNot { t -> t.rawDigits.length >= 6 && !t.rawDigits.contains('.') }
+                    val txToks   = if (filtered.size >= 2) filtered.dropLast(1) else filtered
+                    val fallback = txToks.minByOrNull { it.v }
+                    if (fallback == null) {
+                        discardLog.add(line to "all amounts mapped to balance/reference columns; no fallback token available")
+                        return null
+                    }
+                    amount = fallback.v
+                    type   = TransactionType.EXPENSE
+                }
             }
         } else {
             // No column layout: fall back to digit-length heuristic to filter reference
@@ -223,11 +268,19 @@ class FileParserService @Inject constructor(
             // (running balance) and take the smallest remaining value.
             val filtered = toks.filterNot { t -> t.rawDigits.length >= 6 && !t.rawDigits.contains('.') }
             val txToks   = if (filtered.size >= 2) filtered.dropLast(1) else filtered
-            amount = txToks.minByOrNull { it.v }?.v ?: return null
+            val fallback = txToks.minByOrNull { it.v }
+            if (fallback == null) {
+                discardLog.add(line to "no non-reference amount found (no-layout fallback)")
+                return null
+            }
+            amount = fallback.v
             type   = TransactionType.EXPENSE
         }
 
-        if (amount == 0.0) return null
+        if (amount == 0.0) {
+            discardLog.add(line to "amount is zero")
+            return null
+        }
 
         val keep = BooleanArray(line.length) { true }
         allDateRanges.forEach { r -> r.forEach { if (it < line.length) keep[it] = false } }
@@ -239,7 +292,15 @@ class FileParserService @Inject constructor(
             .replace(Regex("\\s{2,}"), " ")
             .trim()
 
-        if (desc.isBlank() || isSummaryRow(desc)) return null
+        if (desc.isBlank()) {
+            discardLog.add(line to "description blank after removing dates and numbers")
+            return null
+        }
+        if (isSummaryRow(desc)) {
+            val kw = SUMMARY_KEYWORDS.firstOrNull { desc.lowercase().contains(it) } ?: "?"
+            discardLog.add(line to "description matches summary keyword '$kw'")
+            return null
+        }
 
         return ParsedTransaction(
             description = desc,
@@ -827,6 +888,8 @@ class FileParserService @Inject constructor(
     // ── Keywords ──────────────────────────────────────────────────────────────
 
     companion object {
+        private const val IMPORT_TAG = "PDF_Import"
+
         val PDF_DATE_RE = Regex("""\d{1,2}[./\-]\d{1,2}[./\-]\d{2,4}|\d{4}[./\-]\d{2}[./\-]\d{2}""")
         val PDF_NUM_RE  = Regex("""^[-+]?[\d,]+(?:\.\d{1,2})?$""")
         val PDF_TRAILING_AMOUNT_RE = Regex("""([-+]?\d[\d,]*(?:\.\d+)?)\s*(?:[₪${'$'}€£₽]|ILS|NIS)?\s*$""")
