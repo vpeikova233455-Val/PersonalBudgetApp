@@ -20,7 +20,10 @@ data class TransactionListUiState(
     val filter: TransactionFilter = TransactionFilter.ALL,
     val searchQuery: String = "",
     val isLoading: Boolean = true,
-    val error: String? = null
+    val error: String? = null,
+    val isSelectionMode: Boolean = false,
+    val selectedIds: Set<String> = emptySet(),
+    val showDeleteConfirmation: Boolean = false
 )
 
 @HiltViewModel
@@ -82,6 +85,49 @@ class TransactionListViewModel @Inject constructor(
             }
         }
         return result
+    }
+
+    // ── Multi-select ──────────────────────────────────────────────────────────
+
+    fun enterSelectionMode(id: String) {
+        _uiState.update { it.copy(isSelectionMode = true, selectedIds = setOf(id)) }
+    }
+
+    fun toggleSelection(id: String) {
+        _uiState.update { state ->
+            val updated = if (id in state.selectedIds) state.selectedIds - id else state.selectedIds + id
+            state.copy(selectedIds = updated, isSelectionMode = updated.isNotEmpty())
+        }
+    }
+
+    fun selectAll() {
+        _uiState.update { state ->
+            state.copy(selectedIds = state.filteredTransactions.map { it.id }.toSet())
+        }
+    }
+
+    fun clearSelection() {
+        _uiState.update { it.copy(isSelectionMode = false, selectedIds = emptySet(), showDeleteConfirmation = false) }
+    }
+
+    fun requestDeleteSelected() {
+        if (_uiState.value.selectedIds.isNotEmpty()) {
+            _uiState.update { it.copy(showDeleteConfirmation = true) }
+        }
+    }
+
+    fun dismissDeleteConfirmation() {
+        _uiState.update { it.copy(showDeleteConfirmation = false) }
+    }
+
+    fun confirmDeleteSelected() {
+        val idsToDelete = _uiState.value.selectedIds
+        val toDelete = _uiState.value.transactions.filter { it.id in idsToDelete }
+        _uiState.update { it.copy(showDeleteConfirmation = false) }
+        viewModelScope.launch {
+            transactionRepository.deleteTransactions(toDelete)
+            _uiState.update { it.copy(isSelectionMode = false, selectedIds = emptySet()) }
+        }
     }
 
     fun groupByDate(transactions: List<Transaction>): Map<String, List<Transaction>> {

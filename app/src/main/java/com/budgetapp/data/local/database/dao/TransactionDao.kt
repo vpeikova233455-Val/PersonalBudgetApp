@@ -45,6 +45,9 @@ interface TransactionDao {
     @Query("DELETE FROM transactions WHERE id = :transactionId")
     suspend fun deleteTransactionById(transactionId: String)
 
+    @Query("DELETE FROM transactions WHERE id IN (:ids)")
+    suspend fun deleteTransactionsByIds(ids: List<String>)
+
     @Query("UPDATE transactions SET syncStatus = :status WHERE id = :transactionId")
     suspend fun updateSyncStatus(transactionId: String, status: SyncStatus)
 }

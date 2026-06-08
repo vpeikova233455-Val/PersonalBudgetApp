@@ -85,6 +85,13 @@ class TransactionRepositoryImpl @Inject constructor(
         transactionDao.deleteTransactionById(transaction.id)
     }
 
+    override suspend fun deleteTransactions(transactions: List<Transaction>) {
+        transactions.forEach { tx ->
+            logChange(ChangeAction.DELETE, tx.id, tx.toDisplayName(), tx.toEntity(deviceId).toSnapshot())
+        }
+        transactionDao.deleteTransactionsByIds(transactions.map { it.id })
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private suspend fun logChange(action: ChangeAction, id: String, displayName: String, snapshot: String) {
