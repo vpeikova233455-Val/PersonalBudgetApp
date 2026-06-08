@@ -473,4 +473,111 @@ class FileParserServiceTest {
         val mapping = CreditCardMapping(merchantColumn = 0, chargeColumn = 1)
         assertNull(parseCC(listOf("סיכום חשבון", ""), mapping))
     }
+
+    // ── CC PDF row parser ──────────────────────────────────────────────────────
+
+    private val isCreditCardPdfMethod = FileParserService::class.java
+        .getDeclaredMethod("isCreditCardPdf", String::class.java)
+        .also { it.isAccessible = true }
+    private val parseCreditCardPdfLineMethod = FileParserService::class.java
+        .getDeclaredMethod("parseCreditCardPdfLine", String::class.java, Double::class.java)
+        .also { it.isAccessible = true }
+    private val extractCCFromTextMethod = FileParserService::class.java
+        .getDeclaredMethod("extractCreditCardTransactionsFromText", String::class.java)
+        .also { it.isAccessible = true }
+
+    private fun isCCPdf(text: String) =
+        isCreditCardPdfMethod.invoke(service, text) as Boolean
+    private fun parseCCPdfLine(line: String, chargeRel: Double = -1.0) =
+        parseCreditCardPdfLineMethod.invoke(service, line, chargeRel) as? ParsedTransaction
+    @Suppress("UNCHECKED_CAST")
+    private fun extractCCFromText(text: String) =
+        extractCCFromTextMethod.invoke(service, text) as List<ParsedTransaction>
+
+    @Test
+    fun `isCreditCardPdf detects בית העסק keyword`() {
+        assertTrue(isCCPdf("תאריך העסקה  בית העסק  סכום החיוב"))
+    }
+
+    @Test
+    fun `isCreditCardPdf does not trigger on bank statement`() {
+        assertFalse(isCCPdf("תאריך  סוג תנועה  זכות/חובה  יתרה בש\"ח"))
+    }
+
+    @Test
+    fun `parseCreditCardPdfLine extracts correct amount — single date`() {
+        // Typical CC row: date  merchant  amount
+        val tx = parseCCPdfLine("01/05/2026  ארטנובה-שרון מ  150.00")
+        assertNotNull(tx)
+        assertEquals(150.0, tx!!.amount, 0.001)
+        assertEquals(TransactionType.EXPENSE, tx.type)
+    }
+
+    @Test
+    fun `parseCreditCardPdfLine excludes billing-month digit from two-date row`() {
+        // Root cause of the ₪5.00 bug: the billing date "05/06/2026" contributes "05"
+        // which was the smallest number and was selected as the amount.
+        // After the fix, both dates are excluded and 150.00 is correctly chosen.
+        val tx = parseCCPdfLine("01/05/2026  05/06/2026  ביר בר  150.00")
+        assertNotNull("Row with two dates must not be dropped", tx)
+        assertEquals("Month digit from billing date must not be the amount", 150.0, tx!!.amount, 0.001)
+    }
+
+    @Test
+    fun `parseCreditCardPdfLine with installment row picks correct amount via column position`() {
+        // Row: transaction-date  billing-date  merchant  original-amount  installment  total-inst  charge-in-ILS
+        // The "5" installment number must not be selected as amount.
+        // With chargeRel pointing to the rightmost position (end of line), 245.00 or 20.42 is chosen.
+        // We verify it is NOT 5.0 (the installment count).
+        val tx = parseCCPdfLine("01/05/2026  05/06/2026  פנגו-חניונים  245.00  5  12  20.42", chargeRel = 0.0)
+        assertNotNull(tx)
+        assertNotEquals("Installment count must not be the amount", 5.0, tx!!.amount, 0.001)
+    }
+
+    @Test
+    fun `parseCreditCardPdfLine with no date returns null`() {
+        assertNull(parseCCPdfLine("MAE  150.00  USD"))
+    }
+
+    @Test
+    fun `parseCreditCardPdfLine with no numbers returns null`() {
+        assertNull(parseCCPdfLine("01/05/2026  ביר בר"))
+    }
+
+    @Test
+    fun `extractCreditCardTransactionsFromText parses full CC text`() {
+        val text = """
+            תאריך העסקה  בית העסק  סכום החיוב
+            01/05/2026  ארטנובה-שרון מ  150.00
+            02/05/2026  פנגו-חניונים  25.50
+            03/05/2026  MAE  89.90
+        """.trimIndent()
+        val txs = extractCCFromText(text)
+        assertEquals(3, txs.size)
+        assertTrue("All must be EXPENSE", txs.all { it.type == TransactionType.EXPENSE })
+        assertEquals(150.0, txs[0].amount, 0.001)
+        assertEquals(25.5,  txs[1].amount, 0.001)
+        assertEquals(89.9,  txs[2].amount, 0.001)
+    }
+
+    @Test
+    fun `extractCreditCardTransactionsFromText skips summary row`() {
+        val text = """
+            בית העסק  תאריך העסקה  סכום החיוב
+            ביר בר  01/05/2026  75.00
+            סה"כ  01/05/2026  75.00
+        """.trimIndent()
+        val txs = extractCCFromText(text)
+        assertEquals("Summary row must be skipped", 1, txs.size)
+    }
+
+    @Test
+    fun `extractCreditCardTransactionsFromText returns empty for non-CC text`() {
+        val text = """
+            תאריך  סוג תנועה  חובה  זכות
+            01/05/2026  משכורת  0  5000.00
+        """.trimIndent()
+        val txs = extractCCFromText(text)
+        assertEquals("Non-CC text must produce no results", 0, txs.size)
+    }
 }

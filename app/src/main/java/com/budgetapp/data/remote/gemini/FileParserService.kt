@@ -74,8 +74,17 @@ class FileParserService @Inject constructor(
             doc.close()
             inputStream.close()
 
-            val sortedTx = if (sortedText.isNotBlank()) extractTransactionsFromText(sortedText) else emptyList()
-            val naturalTx = if (naturalText.isNotBlank()) extractTransactionsFromText(naturalText) else emptyList()
+            // Credit card PDFs need a dedicated row-based parser — never use the generic
+            // bank-statement extractor for CC files, as it mixes numbers across columns.
+            val isCc = isCreditCardPdf(sortedText) || isCreditCardPdf(naturalText)
+            val sortedTx = if (sortedText.isNotBlank()) {
+                if (isCc) extractCreditCardTransactionsFromText(sortedText)
+                else extractTransactionsFromText(sortedText)
+            } else emptyList()
+            val naturalTx = if (naturalText.isNotBlank()) {
+                if (isCc) extractCreditCardTransactionsFromText(naturalText)
+                else extractTransactionsFromText(naturalText)
+            } else emptyList()
 
             val transactions = if (sortedTx.size >= naturalTx.size) sortedTx else naturalTx
 
@@ -149,19 +158,21 @@ class FileParserService @Inject constructor(
     }
 
     private fun parsePdfLine(line: String, layout: PdfColumnLayout?, header: String?): ParsedTransaction? {
-        // Must have a recognisable date
-        val dateMatch = PDF_DATE_RE.find(line) ?: return null
-        val date = parseDate(dateMatch.value)
-        val dateRange = dateMatch.range
+        // Find ALL date patterns on this line; the first one is the transaction date.
+        // Some PDFs include both a transaction date and a billing date on the same row —
+        // we must exclude both from number picking so the month digit (e.g. "05" from
+        // "05/06/2026") is never mistaken for a monetary amount.
+        val allDates = PDF_DATE_RE.findAll(line).toList()
+        if (allDates.isEmpty()) return null
+        val date = parseDate(allDates.first().value)
+        val allDateRanges = allDates.map { it.range }
 
         // Collect numeric tokens, skipping:
-        //   (a) any match whose range overlaps the date string — prevents date digits
-        //       like "01", "04", "2026" from being treated as amounts
-        //   (b) pure integers whose digit-only form is ≥ 6 chars — these are reference /
-        //       account numbers (e.g. 1234567); check digit count after stripping commas
+        //   (a) any match that overlaps ANY date on the line
+        //   (b) pure integers whose digit-only form is ≥ 6 chars (reference/account numbers)
         data class Tok(val v: Double, val pos: Int, val raw: String)
         val toks = PDF_NUM_FINDER.findAll(line).mapNotNull { m ->
-            if (m.range.first in dateRange || m.range.last in dateRange) return@mapNotNull null
+            if (allDateRanges.any { r -> m.range.first in r || m.range.last in r }) return@mapNotNull null
             val raw = m.value
             val digits = raw.replace(",", "")
             if (digits.length >= 6 && !digits.contains('.')) return@mapNotNull null
@@ -220,11 +231,11 @@ class FileParserService @Inject constructor(
         if (amount == 0.0) return null
 
         // ── Build description ────────────────────────────────────────────────
-        // Mark every character that belongs to the date or ANY numeric token as
+        // Mark every character that belongs to ANY date or ANY numeric token as
         // "remove" using a boolean array, then rebuild the string in one pass.
         // This avoids the index-shift bugs that occur with sequential removeRange calls.
         val keep = BooleanArray(line.length) { true }
-        dateRange.forEach { if (it < line.length) keep[it] = false }
+        allDateRanges.forEach { r -> r.forEach { if (it < line.length) keep[it] = false } }
         PDF_NUM_FINDER.findAll(line).forEach { m ->
             m.range.forEach { if (it < line.length) keep[it] = false }
         }
@@ -238,6 +249,98 @@ class FileParserService @Inject constructor(
         if (desc.isBlank() || isSummaryRow(desc)) return null
 
         return ParsedTransaction(description = desc, amount = amount, date = date, type = overrideTypeByDescription(desc, type), rawData = line)
+    }
+
+    // ── Credit card PDF ───────────────────────────────────────────────────────
+
+    // True if the extracted text contains a credit-card-specific column header.
+    private fun isCreditCardPdf(text: String): Boolean =
+        CC_SIGNATURE_KEYWORDS.any { sig -> text.contains(sig) }
+
+    // Dedicated row-by-row parser for credit card PDF statements.
+    // Every parsed transaction is an EXPENSE.  Only three columns are used:
+    // transaction date, merchant name, and charge amount (סכום החיוב).
+    private fun extractCreditCardTransactionsFromText(text: String): List<ParsedTransaction> {
+        val lines = text.lines().map { it.trim() }.filter { it.isNotBlank() }
+
+        // Locate the header line (first line that contains a CC-specific keyword).
+        val headerIdx = lines.indexOfFirst { line ->
+            CC_SIGNATURE_KEYWORDS.any { line.contains(it) }
+        }.takeIf { it >= 0 } ?: return emptyList()
+
+        val header = lines[headerIdx]
+        val hLen   = header.length.coerceAtLeast(1).toDouble()
+
+        // Character position of the charge column inside the header string.
+        fun headerPos(keywords: List<String>): Int =
+            keywords.mapNotNull { kw -> header.indexOf(kw).takeIf { it >= 0 } }.minOrNull() ?: -1
+
+        val chargePos  = headerPos(CC_CHARGE_KEYWORDS)
+        val chargeRel  = if (chargePos >= 0) chargePos / hLen else -1.0
+
+        return lines.drop(headerIdx + 1)
+            .filter { !isSummaryRow(it) }
+            .mapNotNull { line -> parseCreditCardPdfLine(line, chargeRel) }
+    }
+
+    // Parses one row from a credit card PDF.  Picks the amount by proximity to the
+    // charge column position recorded from the header; falls back to the last token.
+    // All dates on the line are excluded from number candidates — this prevents the
+    // billing-month digit (e.g. "05" in "05/06/2026") from being chosen as the amount.
+    private fun parseCreditCardPdfLine(line: String, chargeColumnRel: Double): ParsedTransaction? {
+        val allDates = PDF_DATE_RE.findAll(line).toList()
+        if (allDates.isEmpty()) return null
+
+        val date          = parseDate(allDates.first().value)
+        val allDateRanges = allDates.map { it.range }
+        val lLen          = line.length.coerceAtLeast(1).toDouble()
+
+        data class Tok(val v: Double, val pos: Int)
+        val toks = PDF_NUM_FINDER.findAll(line).mapNotNull { m ->
+            if (allDateRanges.any { r -> m.range.first in r || m.range.last in r }) return@mapNotNull null
+            val digits = m.value.replace(",", "")
+            if (digits.length >= 6 && !digits.contains('.')) return@mapNotNull null
+            val v = parseAmount(m.value) ?: return@mapNotNull null
+            if (v <= 0) return@mapNotNull null
+            Tok(v, m.range.first)
+        }.toList()
+
+        if (toks.isEmpty()) return null
+
+        // Amount = token whose relative position is closest to the charge column.
+        // When no column layout is available, use the last token (amounts tend to
+        // appear at the end of the line in natural RTL reading order).
+        val amount: Double = when {
+            chargeColumnRel >= 0 && toks.size > 1 ->
+                toks.minByOrNull { kotlin.math.abs(it.pos / lLen - chargeColumnRel) }?.v
+                    ?: return null
+            else -> toks.last().v
+        }
+
+        if (amount == 0.0) return null
+
+        // Build description: remove all dates and all numeric tokens.
+        val keep = BooleanArray(line.length) { true }
+        allDateRanges.forEach { r -> r.forEach { if (it < line.length) keep[it] = false } }
+        PDF_NUM_FINDER.findAll(line).forEach { m ->
+            m.range.forEach { if (it < line.length) keep[it] = false }
+        }
+
+        val desc = line.filterIndexed { i, _ -> keep[i] }
+            .replace(Regex("[₪\$€£₽]|ILS|NIS|USD|EUR"), "")
+            .replace(Regex("[|/\\\\]"), " ")
+            .replace(Regex("\\s{2,}"), " ")
+            .trim()
+
+        if (desc.isBlank() || isSummaryRow(desc)) return null
+
+        return ParsedTransaction(
+            description = desc,
+            amount      = amount,
+            date        = date,
+            type        = TransactionType.EXPENSE,
+            rawData     = line
+        )
     }
 
     // ── Excel ──────────────────────────────────────────────────────────────────
