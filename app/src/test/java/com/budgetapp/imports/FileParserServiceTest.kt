@@ -237,15 +237,17 @@ class FileParserServiceTest {
         assertEquals(1234.56, tx.amount, 0.01)
     }
 
-    // ── גולד מסטרקרד short spelling (no aleph) ───────────────────────────────────
+    // ── Column-only classification (no description override) ─────────────────
 
     @Test
-    fun `גולד מסטרקרד short spelling in credit column is EXPENSE`() {
-        // Non-combined format: credit column, description override must catch this variant
+    fun `גולד מסטרקרד in credit column is INCOME — column wins, no description override`() {
+        // Income/expense is determined solely by column and cell color.
+        // A credit-column value is INCOME regardless of description.
+        // (For Excel files, cell color would correctly show red = EXPENSE if applicable.)
         val mapping = ColumnMapping(descriptionColumn = 0, creditColumn = 1)
         val tx = parse(listOf("גולד מסטרקרד", "1500"), mapping)
         assertNotNull(tx)
-        assertEquals("גולד מסטרקרד must be EXPENSE via description override", TransactionType.EXPENSE, tx!!.type)
+        assertEquals("credit column → INCOME, description not used", TransactionType.INCOME, tx!!.type)
     }
 
     // ── Cell color helpers ─────────────────────────────────────────────────────
@@ -287,20 +289,21 @@ class FileParserServiceTest {
         assertFalse(green(0, 0, 128))
     }
 
-    // ── Description-based overrides ────────────────────────────────────────────
+    // ── Column-only classification — description never overrides column ──────────
+    // Income/expense is determined solely by which column holds the value (and cell
+    // color for Excel).  The description/name is never consulted.
 
     @Test
-    fun `העברה באינטרנט is always EXPENSE even when landed in credit column`() {
-        // Simulate a bank file where the column detection puts the row in credit
+    fun `העברה באינטרנט in credit column is INCOME — column wins`() {
         val mapping = ColumnMapping(descriptionColumn = 0, creditColumn = 1)
         val tx = parse(listOf("העברה באינטרנט", "450.00"), mapping)
         assertNotNull(tx)
-        assertEquals("העברה באינטרנט must always be EXPENSE", TransactionType.EXPENSE, tx!!.type)
+        assertEquals("credit column → INCOME regardless of description", TransactionType.INCOME, tx!!.type)
         assertEquals(450.0, tx.amount, 0.001)
     }
 
     @Test
-    fun `העברה באינטרנט in debit column stays EXPENSE`() {
+    fun `העברה באינטרנט in debit column is EXPENSE — column wins`() {
         val mapping = ColumnMapping(descriptionColumn = 0, debitColumn = 1, creditColumn = 2)
         val tx = parse(listOf("העברה באינטרנט", "200.00", ""), mapping)
         assertNotNull(tx)
@@ -308,60 +311,59 @@ class FileParserServiceTest {
     }
 
     @Test
-    fun `Gold Mastercard in credit column is EXPENSE`() {
+    fun `Gold Mastercard in credit column is INCOME — column wins`() {
         val mapping = ColumnMapping(descriptionColumn = 0, creditColumn = 1)
         val tx = parse(listOf("Gold Mastercard", "1500.00"), mapping)
         assertNotNull(tx)
-        assertEquals("Credit card charges must always be EXPENSE", TransactionType.EXPENSE, tx!!.type)
+        assertEquals("credit column → INCOME, description not consulted", TransactionType.INCOME, tx!!.type)
     }
 
     @Test
-    fun `גולד מסטרקארד in credit column is EXPENSE`() {
+    fun `גולד מסטרקארד in credit column is INCOME — column wins`() {
         val mapping = ColumnMapping(descriptionColumn = 0, creditColumn = 1)
         val tx = parse(listOf("גולד מסטרקארד", "2300.00"), mapping)
         assertNotNull(tx)
-        assertEquals(TransactionType.EXPENSE, tx!!.type)
+        assertEquals(TransactionType.INCOME, tx!!.type)
     }
 
     @Test
-    fun `גולד מאסטרקארד (aleph variant) in credit column is EXPENSE`() {
-        // This is the actual spelling used by some Israeli bank exports — note מ-א-ס vs מ-ס
+    fun `גולד מאסטרקארד in credit column is INCOME — column wins`() {
         val mapping = ColumnMapping(descriptionColumn = 0, creditColumn = 1)
         val tx = parse(listOf("גולד מאסטרקארד", "2300.00"), mapping)
         assertNotNull(tx)
-        assertEquals("גולד מאסטרקארד must be EXPENSE", TransactionType.EXPENSE, tx!!.type)
+        assertEquals(TransactionType.INCOME, tx!!.type)
     }
 
     @Test
-    fun `Visa charge in credit column is EXPENSE`() {
+    fun `Visa charge in credit column is INCOME — column wins`() {
         val mapping = ColumnMapping(descriptionColumn = 0, creditColumn = 1)
         val tx = parse(listOf("Visa Classic", "800.00"), mapping)
         assertNotNull(tx)
-        assertEquals(TransactionType.EXPENSE, tx!!.type)
+        assertEquals(TransactionType.INCOME, tx!!.type)
     }
 
     @Test
-    fun `כרטיס אשראי in credit column is EXPENSE`() {
+    fun `כרטיס אשראי in credit column is INCOME — column wins`() {
         val mapping = ColumnMapping(descriptionColumn = 0, creditColumn = 1)
         val tx = parse(listOf("כרטיס אשראי לאומי", "3200.00"), mapping)
         assertNotNull(tx)
-        assertEquals(TransactionType.EXPENSE, tx!!.type)
+        assertEquals(TransactionType.INCOME, tx!!.type)
     }
 
     @Test
-    fun `חיוב כרטיס in credit column is EXPENSE`() {
+    fun `חיוב כרטיס in credit column is INCOME — column wins`() {
         val mapping = ColumnMapping(descriptionColumn = 0, creditColumn = 1)
         val tx = parse(listOf("חיוב כרטיס ויזה", "950.00"), mapping)
         assertNotNull(tx)
-        assertEquals(TransactionType.EXPENSE, tx!!.type)
+        assertEquals(TransactionType.INCOME, tx!!.type)
     }
 
     @Test
-    fun `Diners charge in credit column is EXPENSE`() {
+    fun `Diners charge in credit column is INCOME — column wins`() {
         val mapping = ColumnMapping(descriptionColumn = 0, creditColumn = 1)
         val tx = parse(listOf("Diners Gold", "600.00"), mapping)
         assertNotNull(tx)
-        assertEquals(TransactionType.EXPENSE, tx!!.type)
+        assertEquals(TransactionType.INCOME, tx!!.type)
     }
 
     // ── Credit card format detection ───────────────────────────────────────────
@@ -701,5 +703,95 @@ class FileParserServiceTest {
         assertEquals(3500.0,  txs[1].amount, 0.001)
         assertEquals(TransactionType.EXPENSE, txs[2].type)
         assertEquals(250.0,   txs[2].amount, 0.001)
+    }
+
+    // ── Bank Hapoalim: reference number must never be used as amount ───────────
+
+    @Test
+    fun `reference number in אסמכתה column is never used as amount`() {
+        // Bank Hapoalim 6-column format: date | description | reference | debit | credit | balance
+        val mapping = detect(listOf("תאריך", "סוג תנועה", "אסמכתה", "חובה", "זכות", "יתרה בשקלים"))
+        assertEquals("referenceColumn must be detected", 2, mapping.referenceColumn)
+        assertEquals("debitColumn must be 3", 3, mapping.debitColumn)
+        assertEquals("creditColumn must be 4", 4, mapping.creditColumn)
+
+        // זיכוי - בנק הפועלים: credit 732, reference 99012
+        val tx = parse(
+            listOf("12/03/2024", "זיכוי - בנק הפועלים", "99012", "", "732", "15000"),
+            mapping
+        )
+        assertNotNull("Transaction must not be dropped", tx)
+        assertEquals("Amount must be 732 (credit), not 99012 (reference)", 732.0, tx!!.amount, 0.001)
+        assertEquals("Credit column → INCOME", TransactionType.INCOME, tx.type)
+    }
+
+    @Test
+    fun `row where amount equals reference number is rejected`() {
+        // Simulate a row where columns have shifted: reference number lands in the debit slot.
+        val mapping = ColumnMapping(
+            dateColumn = 0, descriptionColumn = 1,
+            referenceColumn = 2, debitColumn = 3, creditColumn = 4, balanceColumn = 5
+        )
+        // Both debit (col 3) and reference (col 2) contain 99012 — parser must reject this row.
+        val tx = parse(
+            listOf("12/03/2024", "זיכוי - בנק הפועלים", "99012", "99012", "", "15000"),
+            mapping
+        )
+        assertNull("Row where amount == reference must be dropped", tx)
+    }
+
+    @Test
+    fun `Bank Hapoalim 4-column combined column format parses correctly`() {
+        // Format: תאריך | סוג תנועה | זכות/חובה | יתרה בש"ח
+        val mapping = detect(listOf("תאריך", "סוג תנועה", "זכות/חובה", "יתרה בש\"ח"))
+        assertNotNull("amountColumn must be detected", mapping.amountColumn)
+        assertEquals(2, mapping.amountColumn)
+        assertTrue("isCombinedAmountColumn must be true", mapping.isCombinedAmountColumn)
+        assertNull("no separate debitColumn", mapping.debitColumn)
+        assertNull("no separate creditColumn", mapping.creditColumn)
+        assertNotNull("balanceColumn must be detected", mapping.balanceColumn)
+
+        val tx = parse(listOf("12/03/2024", "זיכוי - בנק הפועלים", "732", "15000"), mapping)
+        assertNotNull("Transaction must not be dropped", tx)
+        assertEquals("Amount must be 732", 732.0, tx!!.amount, 0.001)
+    }
+
+    // ── CSV header row search (findHeaderRowIndexInCsv) ───────────────────────
+
+    private val findHeaderRowIndexInCsvMethod = FileParserService::class.java
+        .getDeclaredMethod("findHeaderRowIndexInCsv", List::class.java)
+        .also { it.isAccessible = true }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun findHeaderIdx(rows: List<Array<String>>) =
+        findHeaderRowIndexInCsvMethod.invoke(service, rows) as Int
+
+    @Test
+    fun `findHeaderRowIndexInCsv returns 0 when first row is the header`() {
+        val rows = listOf(
+            arrayOf("תאריך", "סוג תנועה", "אסמכתה", "חובה", "זכות", "יתרה בשקלים"),
+            arrayOf("12/03/2024", "זיכוי - בנק הפועלים", "99012", "", "732", "15000")
+        )
+        assertEquals(0, findHeaderIdx(rows))
+    }
+
+    @Test
+    fun `findHeaderRowIndexInCsv skips metadata rows and finds real header`() {
+        val rows = listOf(
+            arrayOf("בנק הפועלים - תדפיס חשבון"),
+            arrayOf("חשבון:", "12345678", "", "", "", ""),
+            arrayOf("תאריך", "סוג תנועה", "אסמכתה", "חובה", "זכות", "יתרה בשקלים"),
+            arrayOf("12/03/2024", "זיכוי", "99012", "", "732", "15000")
+        )
+        assertEquals("Real header is at row 2", 2, findHeaderIdx(rows))
+    }
+
+    @Test
+    fun `findHeaderRowIndexInCsv returns 0 as safe fallback when no header row found`() {
+        val rows = listOf(
+            arrayOf("foo", "bar", "baz"),
+            arrayOf("1", "2", "3")
+        )
+        assertEquals(0, findHeaderIdx(rows))
     }
 }

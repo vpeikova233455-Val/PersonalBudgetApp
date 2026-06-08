@@ -650,14 +650,19 @@ class FileParserService @Inject constructor(
 
             if (allRows.isEmpty()) return FileParseResult.Error("File is empty")
 
-            val headerRow = allRows[0].toList()
+            // Bank exports (e.g. Bank Hapoalim) often include 1-3 metadata lines
+            // before the real column header row.  Search for it instead of blindly
+            // assuming row 0 is the header.
+            val headerRowIndex = findHeaderRowIndexInCsv(allRows)
+            val headerRow = allRows[headerRowIndex].toList()
+            AppLogger.d(IMPORT_TAG, "[CSV] Header row at index $headerRowIndex: ${headerRow.joinToString(" | ")}")
             val transactions = mutableListOf<ParsedTransaction>()
 
             if (isCreditCardFormat(headerRow)) {
                 val ccMapping = detectCreditCardMapping(headerRow)
                 if (!ccMapping.hasEnoughColumns())
                     return FileParseResult.Error("Could not identify transaction columns in this file")
-                for (i in 1 until allRows.size) {
+                for (i in (headerRowIndex + 1) until allRows.size) {
                     try {
                         val parsed = parseCreditCardRow(allRows[i].toList(), ccMapping)
                         if (parsed != null) transactions.add(parsed)
@@ -667,7 +672,7 @@ class FileParserService @Inject constructor(
                 val mapping = detectColumnMapping(headerRow)
                 if (!mapping.hasEnoughColumns())
                     return FileParseResult.Error("Could not identify transaction columns in this file")
-                for (i in 1 until allRows.size) {
+                for (i in (headerRowIndex + 1) until allRows.size) {
                     try {
                         val parsed = parseRowData(allRows[i].toList(), mapping)
                         if (parsed != null) transactions.add(parsed)
@@ -683,6 +688,28 @@ class FileParserService @Inject constructor(
         } catch (e: Exception) {
             FileParseResult.Error("Failed to parse CSV: ${e.message}")
         }
+    }
+
+    /**
+     * Searches the first 10 rows of a CSV for the header row — the first row where at
+     * least 2 cells contain recognised column-header keywords.  This matches the logic
+     * used by [findHeaderRow] for Excel sheets so both formats behave consistently.
+     * Returns 0 if no row scores ≥ 2 (safe fallback: treat first row as header).
+     */
+    private fun findHeaderRowIndexInCsv(rows: List<Array<String>>): Int {
+        for (i in 0..minOf(9, rows.size - 1)) {
+            val score = rows[i].count { cell ->
+                val h = cell.trim().lowercase()
+                DATE_KEYWORDS.any  { h.contains(it) } ||
+                DESC_KEYWORDS.any  { h.contains(it) } ||
+                AMOUNT_KEYWORDS.any{ h.contains(it) } ||
+                DEBIT_KEYWORDS.any { h.contains(it) } ||
+                CREDIT_KEYWORDS.any{ h.contains(it) } ||
+                CC_MERCHANT_KEYWORDS.any { h.contains(it) }
+            }
+            if (score >= 2) return i
+        }
+        return 0
     }
 
     // ── Credit card format detection and parsing ─────────────────────────────
@@ -762,14 +789,19 @@ class FileParserService @Inject constructor(
             }
         }
 
-        // If no amount column found, try to infer from position: if there's a description and
-        // a numeric column near the end, assume it's the amount
-        if (!mapping.hasEnoughColumns() && mapping.descriptionColumn != null) {
-            val lastIndex = headers.size - 1
-            if (mapping.amountColumn == null && mapping.debitColumn == null) {
-                mapping.amountColumn = lastIndex
-            }
-        }
+        // Log the resolved mapping so import issues can be diagnosed from logcat.
+        // Amount must come from a named debit/credit/amount column — never from a
+        // position-based fallback.  If hasEnoughColumns() is false the caller will
+        // return an error rather than guessing the wrong column.
+        AppLogger.d(IMPORT_TAG, "[Column Mapping] " +
+            "date=${mapping.dateColumn} " +
+            "desc=${mapping.descriptionColumn} " +
+            "debit=${mapping.debitColumn} " +
+            "credit=${mapping.creditColumn} " +
+            "amount=${mapping.amountColumn}(combined=${mapping.isCombinedAmountColumn}) " +
+            "ref=${mapping.referenceColumn} " +
+            "balance=${mapping.balanceColumn} " +
+            "| headers: ${headers.joinToString(" | ")}")
 
         return mapping
     }
