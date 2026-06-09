@@ -77,9 +77,15 @@ class FileImportViewModel @Inject constructor(
 
     private fun showPreview(transactions: List<ParsedTransaction>) {
         AppLogger.d("FileImport", "Parser returned ${transactions.size} rows")
+        transactions.forEach { tx ->
+            AppLogger.d("FileImport", "[Pipeline:2a-PostParse] desc='${tx.description}' | type=${tx.type} | amount=${tx.amount} | date=${tx.date}")
+        }
         val months = groupByMonth(transactions)
         val shownCount = months.sumOf { it.transactions.size }
         AppLogger.d("FileImport", "Review screen will show $shownCount rows in ${months.size} groups (parser→review delta: ${transactions.size - shownCount})")
+        months.flatMap { it.transactions }.forEach { tx ->
+            AppLogger.d("FileImport", "[Pipeline:2b-AfterDedup] desc='${tx.description}' | type=${tx.type} | amount=${tx.amount}")
+        }
         if (months.isEmpty()) {
             _state.value = FileImportState.Error("No transactions found in this PDF.")
         } else {
@@ -159,6 +165,9 @@ class FileImportViewModel @Inject constructor(
                         sourceUri = "",
                         categoryConfidence = 0.3
                     )
+                }
+                pending.forEach { p ->
+                    AppLogger.d("FileImport", "[Pipeline:3-DBWrite] desc='${p.description}' | type=${p.type} | amount=${p.amount}")
                 }
                 withContext(Dispatchers.IO) {
                     pendingTransactionDao.insertPendingList(pending)

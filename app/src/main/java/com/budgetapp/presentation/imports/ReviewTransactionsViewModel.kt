@@ -9,6 +9,7 @@ import com.budgetapp.data.local.entity.CategoryEntity
 import com.budgetapp.data.local.entity.SyncStatus
 import com.budgetapp.data.local.entity.TransactionEntity
 import com.budgetapp.domain.repository.AuthRepository
+import com.budgetapp.core.util.AppLogger
 import com.budgetapp.domain.usecase.ai.LearnFromUserUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
@@ -43,6 +44,10 @@ class ReviewTransactionsViewModel @Inject constructor(
             pendingTransactionDao.getAllPending(userId)
                 .collect { pending ->
                     val models = pending.map { entity ->
+                        AppLogger.d("ReviewTransactions", "[Pipeline:4-DBRead] desc='${entity.description}' | entityType=${entity.type} | amount=${entity.amount}")
+                        if (entity.type == null) {
+                            AppLogger.e("ReviewTransactions", "[Pipeline:4-NullType] WARN: entity.type is NULL for '${entity.description}' — will default to EXPENSE in UI")
+                        }
                         val suggestion = learnFromUserUseCase.getSuggestion(userId, entity.description ?: "")
                         val suggestedCategoryName = suggestion?.let {
                             categoryDao.getCategoryById(it.categoryId)?.name
@@ -56,12 +61,14 @@ class ReviewTransactionsViewModel @Inject constructor(
                                 suggestion.categoryId, suggestedCategoryName ?: "", suggestion.usageCount, isAutomatic = false
                             )
                         }
+                        val uiType = entity.type?.name ?: "EXPENSE"
+                        AppLogger.d("ReviewTransactions", "[Pipeline:4-UIModel] desc='${entity.description}' | uiType=$uiType")
                         PendingTransactionUiModel(
                             id = entity.id,
                             description = entity.description ?: "Unknown",
                             formattedAmount = formatAmount(entity.amount ?: 0.0),
                             formattedDate = entity.date?.let { formatDate(it) },
-                            type = entity.type?.name ?: "EXPENSE",
+                            type = uiType,
                             suggestedCategoryId = suggestion?.categoryId,
                             suggestedCategoryName = suggestedCategoryName,
                             selectedCategoryId = if (suggestion?.isAutomatic == true) suggestion.categoryId

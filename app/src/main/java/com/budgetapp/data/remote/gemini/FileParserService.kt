@@ -325,11 +325,12 @@ class FileParserService @Inject constructor(
             return null
         }
 
+        AppLogger.d(IMPORT_TAG, "[Pipeline:1-PDF] desc='$desc' | type=$type | amount=$amount | date=$date")
         return ParsedTransaction(
             description = desc,
             amount      = amount,
             date        = date,
-            type        = overrideTypeByDescription(desc, type),
+            type        = type,
             rawData     = line
         )
     }
@@ -514,11 +515,10 @@ class FileParserService @Inject constructor(
     private fun parseExcelRow(row: org.apache.poi.ss.usermodel.Row, mapping: ColumnMapping): ParsedTransaction? {
         val cells = (0 until row.lastCellNum).map { i -> cellText(row.getCell(i)) }
         val parsed = parseRowData(cells, mapping) ?: return null
-        // Cell color is the sole authority: green = INCOME, red = EXPENSE.
-        // Description-based overrides are never applied — only the column position
-        // (debit vs credit) or cell color determines the transaction type.
-        val colorType = detectTypeFromCellColors(row, mapping) ?: return parsed
-        return parsed.copy(type = colorType)
+        val colorType = detectTypeFromCellColors(row, mapping)
+        val final = if (colorType != null) parsed.copy(type = colorType) else parsed
+        AppLogger.d(IMPORT_TAG, "[Pipeline:1-Excel] desc='${final.description}' | type=${final.type} | colorOverride=$colorType | amount=${final.amount}")
+        return final
     }
 
     // Returns the transaction type implied by the font color of the amount cell,
@@ -905,14 +905,6 @@ class FileParserService @Inject constructor(
         )
     }
 
-    // Applies hard-coded description overrides that take priority over column-based detection.
-    private fun overrideTypeByDescription(description: String, detected: TransactionType): TransactionType {
-        val d = description.trim()
-        if (ALWAYS_EXPENSE_DESC_PATTERNS.any { d.contains(it, ignoreCase = true) }) return TransactionType.EXPENSE
-        if (ALWAYS_INCOME_DESC_PATTERNS.any  { d.contains(it, ignoreCase = true) }) return TransactionType.INCOME
-        return detected
-    }
-
     private fun isSummaryRow(text: String): Boolean {
         val lower = text.lowercase()
         return SUMMARY_KEYWORDS.any { lower.contains(it) }
@@ -1037,41 +1029,6 @@ class FileParserService @Inject constructor(
             // English
             "reference", "ref no", "ref.", "cheque no", "check no", "voucher"
         )
-        // Description-based type overrides — applied after column detection.
-        // Use these for transaction labels that are unambiguous regardless of which column
-        // they were found in. Credit card charges from Israeli bank statements often appear
-        // in the credit column (the bank "credits" the card company), so they must be
-        // overridden to EXPENSE here.
-        private val ALWAYS_EXPENSE_DESC_PATTERNS = listOf(
-            // Internet bank transfers — always outgoing
-            "העברה באינטרנט",
-            // Goldmaster store
-            "גולדמסטר",
-            // ── Credit / charge cards ─────────────────────────────────────────
-            // Monthly credit-card billing entries in Israeli bank statements are
-            // deducted from the checking account (= expense) but often appear in
-            // a "credit" column, so they need an explicit override.
-            "mastercard",           // Gold Mastercard, Mastercard Gold, etc.
-            "מסטרקרד",              // Hebrew transliteration — short variant (גולד מסטרקרד)
-            "מסטרקארד",             // Hebrew transliteration — variant with aleph before ד
-            "מאסטרקארד",            // Hebrew transliteration — variant with aleph after מ
-            "גולד מסטרקרד",         // "Gold Mastercard" — short variant
-            "גולד מסטרקארד",        // "Gold Mastercard" — variant 1
-            "גולד מאסטרקארד",       // "Gold Mastercard" — variant 2 (bank statement spelling)
-            "visa",                 // Visa card charge
-            "ויזה",                 // Hebrew for Visa
-            "diners",               // Diners Club
-            "דיינרס",               // Hebrew for Diners
-            "american express",     // Amex
-            "אמריקן אקספרס",        // Hebrew for American Express
-            "amex",
-            // Generic credit-card charge labels used by Israeli banks
-            "חיוב כרטיס",           // "card charge"
-            "כרטיס אשראי",          // "credit card"
-            "חיוב אשראי"            // "credit charge"
-        )
-        private val ALWAYS_INCOME_DESC_PATTERNS = listOf<String>()
-
         // ── Credit card statement column keywords ────────────────────────────────
         // A file is identified as a credit card statement when any header contains
         // one of these signature terms (none appear in bank account statements).
