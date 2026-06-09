@@ -141,36 +141,40 @@ class FileParserService @Inject constructor(
         return result
     }
 
-    // Stores normalised (0.0–1.0) column positions derived from the header string.
-    // Relative positions let us compare header offsets against token offsets in
-    // data rows that may be a different character length.
+    // Stores ABSOLUTE character positions of column headers inside the header line.
+    // Using absolute positions (rather than normalised 0–1 fractions) is correct
+    // because PDFTextStripper with addMoreFormatting=true pads extracted text so
+    // that each column occupies a fixed character width across all rows.  Normalising
+    // by line length breaks this: a data row whose description is shorter than the
+    // header produces a shorter line, shifting every token's normalised position
+    // rightward — causing credit-column amounts to appear past the balance boundary
+    // and fall into the EXPENSE fallback.
     private data class BankLayout(
-        val debitRel:     Double = -1.0,  // חובה / debit      (-1 = absent)
-        val creditRel:    Double = -1.0,  // זכות / credit     (-1 = absent)
-        val balanceRel:   Double = -1.0,  // יתרה / balance    (-1 = absent)
-        val referenceRel: Double = -1.0   // אסמכתה / ref no   (-1 = absent)
+        val debitAbsPos:     Int = -1,  // חובה / debit      (-1 = absent)
+        val creditAbsPos:    Int = -1,  // זכות / credit     (-1 = absent)
+        val balanceAbsPos:   Int = -1,  // יתרה / balance    (-1 = absent)
+        val referenceAbsPos: Int = -1   // אסמכתה / ref no   (-1 = absent)
     ) {
-        val hasDebit    get() = debitRel    >= 0
-        val hasCredit   get() = creditRel   >= 0
-        val hasBalance  get() = balanceRel  >= 0
-        val hasRef      get() = referenceRel >= 0
+        val hasDebit    get() = debitAbsPos    >= 0
+        val hasCredit   get() = creditAbsPos   >= 0
+        val hasBalance  get() = balanceAbsPos  >= 0
+        val hasRef      get() = referenceAbsPos >= 0
     }
 
     private fun buildBankLayout(header: String): BankLayout {
-        val hLen = header.length.coerceAtLeast(1).toDouble()
-        fun rel(keywords: List<String>): Double {
-            val pos = keywords.mapNotNull { kw ->
+        fun absPos(keywords: List<String>): Int =
+            keywords.mapNotNull { kw ->
                 val idx = header.indexOf(kw)
                 if (idx >= 0) idx else null
-            }.minOrNull() ?: return -1.0
-            return pos / hLen
-        }
-        return BankLayout(
-            debitRel     = rel(DEBIT_KEYWORDS),
-            creditRel    = rel(CREDIT_KEYWORDS),
-            balanceRel   = rel(BALANCE_KEYWORDS),
-            referenceRel = rel(REFERENCE_KEYWORDS)
+            }.minOrNull() ?: -1
+        val layout = BankLayout(
+            debitAbsPos     = absPos(DEBIT_KEYWORDS),
+            creditAbsPos    = absPos(CREDIT_KEYWORDS),
+            balanceAbsPos   = absPos(BALANCE_KEYWORDS),
+            referenceAbsPos = absPos(REFERENCE_KEYWORDS)
         )
+        AppLogger.d(IMPORT_TAG, "[BankLayout] debit=${ layout.debitAbsPos} credit=${layout.creditAbsPos} balance=${layout.balanceAbsPos} ref=${layout.referenceAbsPos} | header='${header.take(120)}'")
+        return layout
     }
 
     // Parses one data row from a bank-account PDF statement.
@@ -198,16 +202,19 @@ class FileParserService @Inject constructor(
         val allDates      = PDF_DATE_RE.findAll(line).toList()
         val date          = allDates.firstOrNull()?.let { parseDate(it.value) }
         val allDateRanges = allDates.map { it.range }
-        val lLen          = line.length.coerceAtLeast(1).toDouble()
 
-        data class Tok(val v: Double, val rel: Double, val rawDigits: String)
+        // absPos = absolute character index inside this line — used for column matching.
+        // Do NOT normalise by line length: a shorter data row would shift normalised
+        // positions rightward relative to the header, pushing credit-column amounts
+        // past the balance boundary.
+        data class Tok(val v: Double, val absPos: Int, val rawDigits: String)
 
         // Collect every non-date numeric token.
         val allNumToks = PDF_NUM_FINDER.findAll(line).mapNotNull { m ->
             if (allDateRanges.any { r -> m.range.first in r || m.range.last in r }) return@mapNotNull null
             val v = parseAmount(m.value) ?: return@mapNotNull null
             if (v <= 0) return@mapNotNull null
-            Tok(v, m.range.first / lLen, m.value.replace(",", ""))
+            Tok(v, m.range.first, m.value.replace(",", ""))
         }.toList()
 
         // Israeli bank amounts always use decimal notation (e.g. "732.00").
@@ -235,27 +242,27 @@ class FileParserService @Inject constructor(
         val type: TransactionType
 
         if (layout != null && (layout.hasDebit || layout.hasCredit)) {
-            // Assign every numeric token to the nearest layout column by relative position.
-            // Tokens that land on balance or reference columns are discarded — this handles
-            // both explicit reference numbers (e.g. "789456") and large round amounts like
-            // "100,000" without relying on a digit-length heuristic.
+            // Assign every numeric token to the nearest layout column by ABSOLUTE character
+            // position.  Using absolute positions avoids the normalisation problem: if a
+            // data row is shorter than the header (e.g. shorter description), normalised
+            // positions shift rightward and credit-column amounts land past the balance
+            // boundary, wrongly falling through to the EXPENSE fallback.
             data class Tagged(val tok: Tok, val col: String)
             val tagged = toks.map { t ->
-                val dDist = if (layout.hasDebit)    kotlin.math.abs(t.rel - layout.debitRel)     else Double.MAX_VALUE
-                val cDist = if (layout.hasCredit)   kotlin.math.abs(t.rel - layout.creditRel)    else Double.MAX_VALUE
-                val bDist = if (layout.hasBalance)  kotlin.math.abs(t.rel - layout.balanceRel)   else Double.MAX_VALUE
-                val rDist = if (layout.hasRef)      kotlin.math.abs(t.rel - layout.referenceRel) else Double.MAX_VALUE
+                val dDist = if (layout.hasDebit)    kotlin.math.abs(t.absPos - layout.debitAbsPos).toDouble()    else Double.MAX_VALUE
+                val cDist = if (layout.hasCredit)   kotlin.math.abs(t.absPos - layout.creditAbsPos).toDouble()   else Double.MAX_VALUE
+                val bDist = if (layout.hasBalance)  kotlin.math.abs(t.absPos - layout.balanceAbsPos).toDouble()  else Double.MAX_VALUE
+                val rDist = if (layout.hasRef)      kotlin.math.abs(t.absPos - layout.referenceAbsPos).toDouble() else Double.MAX_VALUE
                 val col   = when (minOf(dDist, cDist, bDist, rDist)) {
                     dDist -> "debit"
                     cDist -> "credit"
                     bDist -> "balance"
                     else  -> "ref"
                 }
-                AppLogger.d(IMPORT_TAG, "  [TokenCol] val=${t.rawDigits} rel=${String.format("%.3f", t.rel)} → $col " +
-                    "(dDist=${String.format("%.3f", dDist)} cDist=${String.format("%.3f", cDist)} " +
-                    "bDist=${String.format("%.3f", bDist)} rDist=${String.format("%.3f", rDist)}) " +
-                    "layout: debit=${String.format("%.3f", layout.debitRel)} credit=${String.format("%.3f", layout.creditRel)} " +
-                    "balance=${String.format("%.3f", layout.balanceRel)} ref=${String.format("%.3f", layout.referenceRel)}")
+                AppLogger.d(IMPORT_TAG, "  [TokenCol] val=${t.rawDigits} absPos=${t.absPos} → $col " +
+                    "(dDist=${ dDist.toInt()} cDist=${cDist.toInt()} bDist=${bDist.toInt()} rDist=${rDist.toInt()}) " +
+                    "layout: debit=${layout.debitAbsPos} credit=${layout.creditAbsPos} " +
+                    "balance=${layout.balanceAbsPos} ref=${layout.referenceAbsPos}")
                 Tagged(t, col)
             }
 
@@ -283,25 +290,26 @@ class FileParserService @Inject constructor(
                 creditTok != null ->
                     { amount = creditTok.tok.v; type = TransactionType.INCOME  }
                 else -> {
-                    // All tokens mapped to balance/reference columns. Integer tokens are
-                    // already excluded from toks when decimal tokens were present, so use
-                    // toks directly. Drop the rightmost token (running balance) and take
-                    // the smallest remaining value as a last-resort fallback.
+                    // All tokens mapped to balance/reference columns. Re-evaluate type using
+                    // only the debit/credit axis — ignore balance/ref when choosing the
+                    // transaction amount so we never silently drop an income transaction.
                     val txToks = if (toks.size >= 2) toks.dropLast(1) else toks
                     val fallback = txToks.minByOrNull { it.v }
                     if (fallback == null) {
                         discardLog.add(line to "all amounts mapped to balance/reference columns; no fallback token available")
                         return null
                     }
-                    AppLogger.d(IMPORT_TAG, "  [Fallback] all tokens → balance/ref; using smallest=${fallback.v} → EXPENSE (no column info)")
+                    val dDist2 = if (layout.hasDebit)  kotlin.math.abs(fallback.absPos - layout.debitAbsPos).toDouble()  else Double.MAX_VALUE
+                    val cDist2 = if (layout.hasCredit) kotlin.math.abs(fallback.absPos - layout.creditAbsPos).toDouble() else Double.MAX_VALUE
+                    val reType = if (cDist2 < dDist2) TransactionType.INCOME else TransactionType.EXPENSE
+                    AppLogger.d(IMPORT_TAG, "  [Fallback] all→balance/ref; re-eval absPos=${fallback.absPos} dDist2=${dDist2.toInt()} cDist2=${cDist2.toInt()} → $reType")
                     amount = fallback.v
-                    type   = TransactionType.EXPENSE
+                    type   = reType
                 }
             }
         } else {
-            // No column layout. Integer tokens are already excluded from toks when decimal
-            // tokens exist. Drop the rightmost token (running balance) and take the smallest
-            // remaining value.
+            // No column layout. Drop the rightmost token (running balance) and take the
+            // smallest remaining decimal value.
             AppLogger.d(IMPORT_TAG, "  [NoLayout] layout=${if (layout == null) "null" else "hasDebit=${layout.hasDebit} hasCredit=${layout.hasCredit}"} — type defaults to EXPENSE")
             val txToks = if (toks.size >= 2) toks.dropLast(1) else toks
             val fallback = txToks.minByOrNull { it.v }
@@ -372,31 +380,32 @@ class FileParserService @Inject constructor(
         }.takeIf { it >= 0 } ?: return emptyList()
 
         val header = lines[headerIdx]
-        val hLen   = header.length.coerceAtLeast(1).toDouble()
 
-        // Character position of the charge column inside the header string.
+        // Absolute character position of the charge column inside the header string.
+        // Using absolute positions (not normalised fractions) mirrors the bank-statement
+        // parser fix: CC rows are often shorter than the header (shorter merchant names),
+        // so normalising by line length would shift token positions rightward.
         fun headerPos(keywords: List<String>): Int =
             keywords.mapNotNull { kw -> header.indexOf(kw).takeIf { it >= 0 } }.minOrNull() ?: -1
 
-        val chargePos  = headerPos(CC_CHARGE_KEYWORDS)
-        val chargeRel  = if (chargePos >= 0) chargePos / hLen else -1.0
+        val chargeAbsPos = headerPos(CC_CHARGE_KEYWORDS)
+        AppLogger.d(IMPORT_TAG, "[CC-Layout] chargeAbsPos=$chargeAbsPos | header='${header.take(120)}'")
 
         return lines.drop(headerIdx + 1)
             .filter { !isSummaryRow(it) }
-            .mapNotNull { line -> parseCreditCardPdfLine(line, chargeRel) }
+            .mapNotNull { line -> parseCreditCardPdfLine(line, chargeAbsPos) }
     }
 
     // Parses one row from a credit card PDF.  Picks the amount by proximity to the
     // charge column position recorded from the header; falls back to the last token.
     // All dates on the line are excluded from number candidates — this prevents the
     // billing-month digit (e.g. "05" in "05/06/2026") from being chosen as the amount.
-    private fun parseCreditCardPdfLine(line: String, chargeColumnRel: Double): ParsedTransaction? {
+    private fun parseCreditCardPdfLine(line: String, chargeAbsPos: Int): ParsedTransaction? {
         val allDates = PDF_DATE_RE.findAll(line).toList()
         if (allDates.isEmpty()) return null
 
         val date          = parseDate(allDates.first().value)
         val allDateRanges = allDates.map { it.range }
-        val lLen          = line.length.coerceAtLeast(1).toDouble()
 
         data class Tok(val v: Double, val pos: Int, val rawDigits: String)
         val allNumToks = PDF_NUM_FINDER.findAll(line).mapNotNull { m ->
@@ -415,12 +424,15 @@ class FileParserService @Inject constructor(
 
         if (toks.isEmpty()) return null
 
-        // Amount = token whose relative position is closest to the charge column.
-        // When no column layout is available, use the last token (amounts tend to
-        // appear at the end of the line in natural RTL reading order).
+        // Amount = token whose ABSOLUTE position is closest to the charge column.
+        // Using absolute positions avoids the normalisation problem: a row with a
+        // shorter merchant name would be shorter than the header, shifting normalised
+        // positions rightward and causing the wrong token to be selected.
+        // Falls back to the last token when no column layout is available (amounts
+        // tend to appear at the end of the line in natural RTL reading order).
         val amount: Double = when {
-            chargeColumnRel >= 0 && toks.size > 1 ->
-                toks.minByOrNull { kotlin.math.abs(it.pos / lLen - chargeColumnRel) }?.v
+            chargeAbsPos >= 0 && toks.size > 1 ->
+                toks.minByOrNull { kotlin.math.abs(it.pos - chargeAbsPos) }?.v
                     ?: return null
             else -> toks.last().v
         }
