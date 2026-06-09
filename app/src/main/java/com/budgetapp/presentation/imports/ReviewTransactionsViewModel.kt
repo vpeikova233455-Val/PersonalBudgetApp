@@ -44,14 +44,18 @@ class ReviewTransactionsViewModel @Inject constructor(
             pendingTransactionDao.getAllPending(userId)
                 .collect { pending ->
                     val models = pending.map { entity ->
-                        AppLogger.d("ReviewTransactions", "[Pipeline:4-DBRead] desc='${entity.description}' | entityType=${entity.type} | amount=${entity.amount}")
+                        // Stage 6 — type read directly from DB; no history lookup modifies it
+                        AppLogger.d("ReviewTransactions", "[Stage6-DBRead] desc='${entity.description}' | entityType=${entity.type} | amount=${entity.amount}")
                         if (entity.type == null) {
-                            AppLogger.e("ReviewTransactions", "[Pipeline:4-NullType] WARN: entity.type is NULL for '${entity.description}' — will default to EXPENSE in UI")
+                            AppLogger.e("ReviewTransactions", "[Stage6-NullType] CRITICAL: type is NULL for '${entity.description}' — DB stored null, will show as EXPENSE")
                         }
+
+                        // Stage 4/5 — learning rules / auto-categorization: affects CATEGORY ONLY, never type
                         val suggestion = learnFromUserUseCase.getSuggestion(userId, entity.description ?: "")
                         val suggestedCategoryName = suggestion?.let {
                             categoryDao.getCategoryById(it.categoryId)?.name
                         }
+                        AppLogger.d("ReviewTransactions", "[Stage5-Learning] desc='${entity.description}' | suggestedCategory='$suggestedCategoryName' | TYPE UNCHANGED=${entity.type}")
                         val learningState = when {
                             suggestion == null -> LearningState.Unknown
                             suggestion.isAutomatic -> LearningState.Known(
@@ -61,8 +65,10 @@ class ReviewTransactionsViewModel @Inject constructor(
                                 suggestion.categoryId, suggestedCategoryName ?: "", suggestion.usageCount, isAutomatic = false
                             )
                         }
+
+                        // Stage 8 — final UI model; type comes ONLY from entity.type read above
                         val uiType = entity.type?.name ?: "EXPENSE"
-                        AppLogger.d("ReviewTransactions", "[Pipeline:4-UIModel] desc='${entity.description}' | uiType=$uiType")
+                        AppLogger.d("ReviewTransactions", "[Stage8-UIModel] desc='${entity.description}' | uiType=$uiType | entityType=${entity.type}")
                         PendingTransactionUiModel(
                             id = entity.id,
                             description = entity.description ?: "Unknown",

@@ -77,14 +77,16 @@ class FileImportViewModel @Inject constructor(
 
     private fun showPreview(transactions: List<ParsedTransaction>) {
         AppLogger.d("FileImport", "Parser returned ${transactions.size} rows")
+        // Stage 1 complete — show every transaction as returned by the parser
         transactions.forEach { tx ->
-            AppLogger.d("FileImport", "[Pipeline:2a-PostParse] desc='${tx.description}' | type=${tx.type} | amount=${tx.amount} | date=${tx.date}")
+            AppLogger.d("FileImport", "[Stage1-Parsed] desc='${tx.description}' | type=${tx.type} | amount=${tx.amount} | date=${tx.date}")
         }
+        // Stage 2/3 — row normalization and duplicate detection; neither changes type
         val months = groupByMonth(transactions)
         val shownCount = months.sumOf { it.transactions.size }
         AppLogger.d("FileImport", "Review screen will show $shownCount rows in ${months.size} groups (parser→review delta: ${transactions.size - shownCount})")
         months.flatMap { it.transactions }.forEach { tx ->
-            AppLogger.d("FileImport", "[Pipeline:2b-AfterDedup] desc='${tx.description}' | type=${tx.type} | amount=${tx.amount}")
+            AppLogger.d("FileImport", "[Stage3-AfterDedup] desc='${tx.description}' | type=${tx.type} | amount=${tx.amount}")
         }
         if (months.isEmpty()) {
             _state.value = FileImportState.Error("No transactions found in this PDF.")
@@ -166,8 +168,9 @@ class FileImportViewModel @Inject constructor(
                         categoryConfidence = 0.3
                     )
                 }
+                // Stage 7 — type is set from parser output; no auto-categorization modifies it here
                 pending.forEach { p ->
-                    AppLogger.d("FileImport", "[Pipeline:3-DBWrite] desc='${p.description}' | type=${p.type} | amount=${p.amount}")
+                    AppLogger.d("FileImport", "[Stage7-DBWrite] desc='${p.description}' | type=${p.type} | amount=${p.amount}")
                 }
                 withContext(Dispatchers.IO) {
                     pendingTransactionDao.insertPendingList(pending)

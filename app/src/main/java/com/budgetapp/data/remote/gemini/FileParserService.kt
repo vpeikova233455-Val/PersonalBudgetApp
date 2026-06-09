@@ -245,12 +245,18 @@ class FileParserService @Inject constructor(
                 val cDist = if (layout.hasCredit)   kotlin.math.abs(t.rel - layout.creditRel)    else Double.MAX_VALUE
                 val bDist = if (layout.hasBalance)  kotlin.math.abs(t.rel - layout.balanceRel)   else Double.MAX_VALUE
                 val rDist = if (layout.hasRef)      kotlin.math.abs(t.rel - layout.referenceRel) else Double.MAX_VALUE
-                Tagged(t, when (minOf(dDist, cDist, bDist, rDist)) {
+                val col   = when (minOf(dDist, cDist, bDist, rDist)) {
                     dDist -> "debit"
                     cDist -> "credit"
                     bDist -> "balance"
                     else  -> "ref"
-                })
+                }
+                AppLogger.d(IMPORT_TAG, "  [TokenCol] val=${t.rawDigits} rel=${String.format("%.3f", t.rel)} → $col " +
+                    "(dDist=${String.format("%.3f", dDist)} cDist=${String.format("%.3f", cDist)} " +
+                    "bDist=${String.format("%.3f", bDist)} rDist=${String.format("%.3f", rDist)}) " +
+                    "layout: debit=${String.format("%.3f", layout.debitRel)} credit=${String.format("%.3f", layout.creditRel)} " +
+                    "balance=${String.format("%.3f", layout.balanceRel)} ref=${String.format("%.3f", layout.referenceRel)}")
+                Tagged(t, col)
             }
 
             val debitTok  = tagged.filter { it.col == "debit"  }.maxByOrNull { it.tok.v }
@@ -261,6 +267,17 @@ class FileParserService @Inject constructor(
                     { amount = debitTok!!.tok.v;  type = TransactionType.EXPENSE }
                 (creditTok?.tok?.v ?: 0.0) > 0.01 && (debitTok?.tok?.v  ?: 0.0) < 0.01 ->
                     { amount = creditTok!!.tok.v; type = TransactionType.INCOME  }
+                debitTok != null && creditTok != null -> {
+                    // Both debit and credit tokens found — log and take the larger value.
+                    // The larger value is always the actual transaction; the smaller is
+                    // typically a fee or partial credit that does not represent the main flow.
+                    AppLogger.d(IMPORT_TAG, "  [BothCols] debit=${debitTok.tok.v} credit=${creditTok.tok.v} → taking larger")
+                    if (creditTok.tok.v >= debitTok.tok.v) {
+                        amount = creditTok.tok.v; type = TransactionType.INCOME
+                    } else {
+                        amount = debitTok.tok.v;  type = TransactionType.EXPENSE
+                    }
+                }
                 debitTok != null ->
                     { amount = debitTok.tok.v;  type = TransactionType.EXPENSE }
                 creditTok != null ->
@@ -276,6 +293,7 @@ class FileParserService @Inject constructor(
                         discardLog.add(line to "all amounts mapped to balance/reference columns; no fallback token available")
                         return null
                     }
+                    AppLogger.d(IMPORT_TAG, "  [Fallback] all tokens → balance/ref; using smallest=${fallback.v} → EXPENSE (no column info)")
                     amount = fallback.v
                     type   = TransactionType.EXPENSE
                 }
@@ -284,6 +302,7 @@ class FileParserService @Inject constructor(
             // No column layout. Integer tokens are already excluded from toks when decimal
             // tokens exist. Drop the rightmost token (running balance) and take the smallest
             // remaining value.
+            AppLogger.d(IMPORT_TAG, "  [NoLayout] layout=${if (layout == null) "null" else "hasDebit=${layout.hasDebit} hasCredit=${layout.hasCredit}"} — type defaults to EXPENSE")
             val txToks = if (toks.size >= 2) toks.dropLast(1) else toks
             val fallback = txToks.minByOrNull { it.v }
             if (fallback == null) {
@@ -536,11 +555,20 @@ class FileParserService @Inject constructor(
             val creditCell = row.getCell(mapping.creditColumn!!)
             val debitVal   = parseAmount(cellText(debitCell))  ?: 0.0
             val creditVal  = parseAmount(cellText(creditCell)) ?: 0.0
+            AppLogger.d(IMPORT_TAG, "  [ColorDetect] debitCol=${mapping.debitColumn} debitVal=$debitVal | creditCol=${mapping.creditColumn} creditVal=$creditVal")
             return when {
                 // Credit cell has a positive value → income; use its color if available.
-                creditVal > 0.01 -> cellFontColorType(creditCell) ?: TransactionType.INCOME
+                creditVal > 0.01 -> {
+                    val color = cellFontColorType(creditCell)
+                    AppLogger.d(IMPORT_TAG, "  [ColorDetect] creditVal=$creditVal → color=$color → ${color ?: TransactionType.INCOME}")
+                    color ?: TransactionType.INCOME
+                }
                 // Debit cell has a positive value → expense; use its color if available.
-                debitVal  > 0.01 -> cellFontColorType(debitCell)  ?: TransactionType.EXPENSE
+                debitVal  > 0.01 -> {
+                    val color = cellFontColorType(debitCell)
+                    AppLogger.d(IMPORT_TAG, "  [ColorDetect] debitVal=$debitVal → color=$color → ${color ?: TransactionType.EXPENSE}")
+                    color ?: TransactionType.EXPENSE
+                }
                 else -> null
             }
         }
@@ -576,8 +604,11 @@ class FileParserService @Inject constructor(
                 val r = rgb[0].toInt() and 0xFF
                 val g = rgb[1].toInt() and 0xFF
                 val b = rgb[2].toInt() and 0xFF
+                AppLogger.d(IMPORT_TAG, "    [CellColor] fontRGB=($r,$g,$b) isRed=${isRedColor(r,g,b)} isGreen=${isGreenColor(r,g,b)}")
                 if (isRedColor(r, g, b))   return TransactionType.EXPENSE
                 if (isGreenColor(r, g, b)) return TransactionType.INCOME
+            } else {
+                AppLogger.d(IMPORT_TAG, "    [CellColor] fontColor present but rgb=null (theme color or auto)")
             }
         }
 
@@ -589,11 +620,13 @@ class FileParserService @Inject constructor(
                 val r = rgb[0].toInt() and 0xFF
                 val g = rgb[1].toInt() and 0xFF
                 val b = rgb[2].toInt() and 0xFF
+                AppLogger.d(IMPORT_TAG, "    [CellColor] fillRGB=($r,$g,$b) isRed=${isRedColor(r,g,b)} isGreen=${isGreenColor(r,g,b)}")
                 if (isRedColor(r, g, b))   return TransactionType.EXPENSE
                 if (isGreenColor(r, g, b)) return TransactionType.INCOME
             }
         }
 
+        AppLogger.d(IMPORT_TAG, "    [CellColor] no recognisable color → returning null")
         return null
     }
 
