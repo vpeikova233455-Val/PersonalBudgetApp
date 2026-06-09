@@ -78,9 +78,19 @@ class FileParserService @Inject constructor(
             // Credit card PDFs need a dedicated row-based parser — never use the generic
             // bank-statement extractor for CC files, as it mixes numbers across columns.
             val isCc = isCreditCardPdf(sortedText) || isCreditCardPdf(naturalText)
+
+            // Build a diagnostic report for bank-statement PDFs so the user can see
+            // exactly what was extracted and how columns were detected — without ADB.
+            val diagBuilder = if (!isCc) StringBuilder() else null
+            diagBuilder?.append("=== PDF PARSER DIAGNOSTIC (v3.1.8) ===\n\n")
+            diagBuilder?.append("PDF type: bank statement (sorted extraction)\n")
+            diagBuilder?.append("EXTRACTED TEXT (first 700 chars):\n")
+            diagBuilder?.append(sortedText.take(700))
+            diagBuilder?.append("\n\n")
+
             val sortedTx = if (sortedText.isNotBlank()) {
                 if (isCc) extractCreditCardTransactionsFromText(sortedText)
-                else extractTransactionsFromText(sortedText)
+                else extractTransactionsFromText(sortedText, diagBuilder)
             } else emptyList()
             val naturalTx = if (naturalText.isNotBlank()) {
                 if (isCc) extractCreditCardTransactionsFromText(naturalText)
@@ -88,17 +98,19 @@ class FileParserService @Inject constructor(
             } else emptyList()
 
             AppLogger.d(IMPORT_TAG, "Sorted extraction: ${sortedTx.size} rows | Natural extraction: ${naturalTx.size} rows")
-            val transactions = if (sortedTx.size >= naturalTx.size) sortedTx else naturalTx
-            AppLogger.d(IMPORT_TAG, "Using ${if (sortedTx.size >= naturalTx.size) "sorted" else "natural"}: ${transactions.size} transactions total")
+            val useSorted = sortedTx.size >= naturalTx.size
+            val transactions = if (useSorted) sortedTx else naturalTx
+            AppLogger.d(IMPORT_TAG, "Using ${if (useSorted) "sorted" else "natural"}: ${transactions.size} transactions total")
+            val diagReport = diagBuilder?.toString()
 
             when {
-                transactions.isNotEmpty() -> FileParseResult.Success(transactions)
+                transactions.isNotEmpty() -> FileParseResult.Success(transactions, diagReport)
                 sortedText.isNotBlank() ->
-                    // Return raw text so the error dialog shows it for debugging
                     FileParseResult.Error(
                         "Could not parse transactions from this PDF.\n\n" +
-                        "Raw text (first 600 chars — paste this to get help tuning the parser):\n\n" +
-                        sortedText.take(600)
+                        "Raw text (first 600 chars):\n\n" +
+                        sortedText.take(600),
+                        diagReport
                     )
                 else -> FileParseResult.NeedsOcr
             }
@@ -107,7 +119,7 @@ class FileParserService @Inject constructor(
         }
     }
 
-    private fun extractTransactionsFromText(text: String): List<ParsedTransaction> {
+    private fun extractTransactionsFromText(text: String, diagBuilder: StringBuilder? = null): List<ParsedTransaction> {
         val lines = text.lines().map { it.trim() }.filter { it.isNotBlank() }
 
         // Find the header row: prefer one that has BOTH a debit AND credit keyword (e.g. חובה + זכות).
@@ -125,6 +137,26 @@ class FileParserService @Inject constructor(
         val startIdx  = if (headerIdx >= 0) headerIdx + 1 else 0
         val dataLines = lines.drop(startIdx)
 
+        // Diagnostic: layout summary
+        if (diagBuilder != null) {
+            diagBuilder.append("HEADER (line $headerIdx): ${header ?: "(not found — no debit+credit keywords on any line)"}\n\n")
+            if (layout != null) {
+                diagBuilder.append("COLUMN LAYOUT:\n")
+                diagBuilder.append("  hasDebit:   ${layout.hasDebit}   absPos=${layout.debitAbsPos}  rel=${"%.3f".format(layout.debitRel)}\n")
+                diagBuilder.append("  hasCredit:  ${layout.hasCredit}  absPos=${layout.creditAbsPos}  rel=${"%.3f".format(layout.creditRel)}\n")
+                diagBuilder.append("  hasBalance: ${layout.hasBalance}  absPos=${layout.balanceAbsPos}  rel=${"%.3f".format(layout.balanceRel)}\n")
+                diagBuilder.append("  hasRef:     ${layout.hasRef}   absPos=${layout.referenceAbsPos}  rel=${"%.3f".format(layout.referenceRel)}\n")
+                diagBuilder.append("  headerLength: ${layout.headerLength}\n")
+                if (!layout.hasDebit) {
+                    diagBuilder.append("  *** WARNING: debit column NOT detected — all tokens default to credit without hasDebit=false guard ***\n")
+                    diagBuilder.append("  *** Keywords searched: ${DEBIT_KEYWORDS.joinToString()} ***\n")
+                }
+            } else {
+                diagBuilder.append("COLUMN LAYOUT: none (no header found)\n")
+            }
+            diagBuilder.append("\n")
+        }
+
         val result     = mutableListOf<ParsedTransaction>()
         val discardLog = mutableListOf<Pair<String, String>>()
 
@@ -138,6 +170,20 @@ class FileParserService @Inject constructor(
             AppLogger.d(IMPORT_TAG, "  discard[$i] reason=$reason | ${ln.take(120)}")
         }
 
+        if (diagBuilder != null) {
+            diagBuilder.append("RESULTS (${result.size} transactions, ${discardLog.size} discarded):\n")
+            result.take(40).forEachIndexed { i, tx ->
+                diagBuilder.append("  ${i + 1}. [${tx.type}] ₪${tx.amount}  ${tx.description.take(35)}\n")
+            }
+            if (result.size > 40) diagBuilder.append("  ... (${result.size - 40} more)\n")
+            if (discardLog.isNotEmpty()) {
+                diagBuilder.append("\nDISCARDED ROWS (first 10):\n")
+                discardLog.take(10).forEach { (ln, reason) ->
+                    diagBuilder.append("  reason=$reason | ${ln.take(80)}\n")
+                }
+            }
+        }
+
         return result
     }
 
@@ -146,9 +192,8 @@ class FileParserService @Inject constructor(
     //           main nearest-column assignment, where normalised fractions keep the
     //           debit column's amounts mapping to "debit" even when data rows are
     //           slightly shorter than the header (shorter descriptions).
-    //   abs  — raw character index in the header string.  Used ONLY in the fallback
-    //           branch, where relative normalisation has already proven incorrect
-    //           for that specific row (the token was pushed past a column boundary).
+    //   abs  — raw character index in the header string.  Used in the fallback
+    //           branch and for the hasDebit=false guard (see below).
     //
     // Why two forms?  Numbers in data rows are right-aligned within their column cells
     // while keywords are left-aligned, so a debit amount starts at a position BETWEEN
@@ -157,16 +202,25 @@ class FileParserService @Inject constructor(
     // regression introduced in v3.1.6).  Relative positions work correctly for normal
     // rows because dividing by the (shorter) data line length inflates token positions
     // rightward, past the credit/debit midpoint toward the correct debit header.
+    //
+    // hasDebit=false guard: when the debit keyword is absent from the detected header,
+    // relative distance to "debit" is MAX_VALUE and every token maps to "credit" —
+    // ALL transactions become INCOME.  The col assignment guards against this by
+    // verifying with absolute distance that a "credit" winner is truly close to the
+    // credit column header (within headerLength/4 chars); tokens farther away are
+    // reclassified as "debit" (expense) since they most likely live in the debit zone
+    // but have no debit anchor to beat.
     private data class BankLayout(
         val debitRel:    Double = -1.0,  // חובה / debit  relative pos (-1 = absent)
         val creditRel:   Double = -1.0,  // זכות / credit relative pos
         val balanceRel:  Double = -1.0,  // יתרה / balance relative pos
         val referenceRel: Double = -1.0, // אסמכתה / ref  relative pos
-        // Absolute positions — for the fallback path only
+        // Absolute positions — for fallback and hasDebit=false guard
         val debitAbsPos:     Int = -1,
         val creditAbsPos:    Int = -1,
         val balanceAbsPos:   Int = -1,
-        val referenceAbsPos: Int = -1
+        val referenceAbsPos: Int = -1,
+        val headerLength:    Int = 0    // raw char count of the header string
     ) {
         val hasDebit    get() = debitRel    >= 0
         val hasCredit   get() = creditRel   >= 0
@@ -189,7 +243,8 @@ class FileParserService @Inject constructor(
             debitRel     = relPos(DEBIT_KEYWORDS),     debitAbsPos     = absPos(DEBIT_KEYWORDS),
             creditRel    = relPos(CREDIT_KEYWORDS),    creditAbsPos    = absPos(CREDIT_KEYWORDS),
             balanceRel   = relPos(BALANCE_KEYWORDS),   balanceAbsPos   = absPos(BALANCE_KEYWORDS),
-            referenceRel = relPos(REFERENCE_KEYWORDS), referenceAbsPos = absPos(REFERENCE_KEYWORDS)
+            referenceRel = relPos(REFERENCE_KEYWORDS), referenceAbsPos = absPos(REFERENCE_KEYWORDS),
+            headerLength = hLen.toInt()
         )
         AppLogger.d(IMPORT_TAG,
             "[BankLayout] headerLen=${hLen.toInt()} " +
@@ -285,9 +340,21 @@ class FileParserService @Inject constructor(
                 val cDist = if (layout.hasCredit)   kotlin.math.abs(t.rel - layout.creditRel)   else Double.MAX_VALUE
                 val bDist = if (layout.hasBalance)  kotlin.math.abs(t.rel - layout.balanceRel)  else Double.MAX_VALUE
                 val rDist = if (layout.hasRef)      kotlin.math.abs(t.rel - layout.referenceRel) else Double.MAX_VALUE
-                val col   = when (minOf(dDist, cDist, bDist, rDist)) {
+                val winnerDist = minOf(dDist, cDist, bDist, rDist)
+                val col = when (winnerDist) {
                     dDist -> "debit"
-                    cDist -> "credit"
+                    cDist -> {
+                        // Guard: when the debit keyword was not found in the header, dDist=MAX_VALUE
+                        // and "credit" wins against every token by default — ALL become INCOME.
+                        // Verify with absolute position: only classify as credit (income) if the
+                        // token is within headerLength/4 chars of the credit column header.
+                        // Tokens further away are in the debit zone and should be expenses.
+                        if (!layout.hasDebit && layout.hasCredit && layout.headerLength > 0) {
+                            val absToCredit = kotlin.math.abs(t.absPos - layout.creditAbsPos)
+                            val thresh = (layout.headerLength / 4).coerceAtLeast(8)
+                            if (absToCredit <= thresh) "credit" else "debit"
+                        } else "credit"
+                    }
                     bDist -> "balance"
                     else  -> "ref"
                 }
@@ -296,7 +363,8 @@ class FileParserService @Inject constructor(
                     "(dRel=${"%.3f".format(dDist)} cRel=${"%.3f".format(cDist)} " +
                     "bRel=${"%.3f".format(bDist)} rRel=${"%.3f".format(rDist)}) " +
                     "[abs dDist=${kotlin.math.abs(t.absPos - layout.debitAbsPos).takeIf { layout.hasDebit } ?: "—"} " +
-                    "cDist=${kotlin.math.abs(t.absPos - layout.creditAbsPos).takeIf { layout.hasCredit } ?: "—"}]")
+                    "cDist=${kotlin.math.abs(t.absPos - layout.creditAbsPos).takeIf { layout.hasCredit } ?: "—"}" +
+                    "${if (!layout.hasDebit) " hasDebit=false thresh=${(layout.headerLength/4).coerceAtLeast(8)}" else ""}]")
                 Tagged(t, col)
             }
 
@@ -343,7 +411,10 @@ class FileParserService @Inject constructor(
                     }
                     val dDist2 = if (layout.hasDebit)  kotlin.math.abs(fallback.absPos - layout.debitAbsPos).toDouble()  else Double.MAX_VALUE
                     val cDist2 = if (layout.hasCredit) kotlin.math.abs(fallback.absPos - layout.creditAbsPos).toDouble() else Double.MAX_VALUE
-                    val reType = if (cDist2 < dDist2) TransactionType.INCOME else TransactionType.EXPENSE
+                    // Only use cDist2 < dDist2 when the debit column was actually detected.
+                    // When hasDebit=false, dDist2=MAX_VALUE so cDist2 always wins → always INCOME.
+                    // Without a debit anchor, fall back to EXPENSE (safe default, mirrors v3.1.5).
+                    val reType = if (layout.hasDebit && cDist2 < dDist2) TransactionType.INCOME else TransactionType.EXPENSE
                     AppLogger.d(IMPORT_TAG,
                         "  [Fallback] all→balance/ref (short line inflated rel pos); " +
                         "re-eval by ABS: absPos=${fallback.absPos} " +
@@ -1204,7 +1275,7 @@ data class ParsedTransaction(
 )
 
 sealed class FileParseResult {
-    data class Success(val transactions: List<ParsedTransaction>) : FileParseResult()
-    data class Error(val message: String) : FileParseResult()
+    data class Success(val transactions: List<ParsedTransaction>, val diagnosticReport: String? = null) : FileParseResult()
+    data class Error(val message: String, val diagnosticReport: String? = null) : FileParseResult()
     object NeedsOcr : FileParseResult()
 }

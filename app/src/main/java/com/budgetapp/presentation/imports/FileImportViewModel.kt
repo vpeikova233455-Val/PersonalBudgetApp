@@ -49,7 +49,7 @@ class FileImportViewModel @Inject constructor(
             try {
                 val result = withContext(Dispatchers.IO) { fileParserService.parseFile(uri) }
                 when (result) {
-                    is FileParseResult.Success -> showPreview(result.transactions)
+                    is FileParseResult.Success -> showPreview(result.transactions, result.diagnosticReport)
                     is FileParseResult.NeedsOcr -> {
                         _state.value = FileImportState.OcrInProgress
                         val transactions = withContext(Dispatchers.IO) { ocrPdfPages(uri) }
@@ -75,7 +75,7 @@ class FileImportViewModel @Inject constructor(
         }
     }
 
-    private fun showPreview(transactions: List<ParsedTransaction>) {
+    private fun showPreview(transactions: List<ParsedTransaction>, diagnosticReport: String? = null) {
         AppLogger.d("FileImport", "Parser returned ${transactions.size} rows")
         // Stage 1 complete — show every transaction as returned by the parser
         transactions.forEach { tx ->
@@ -91,7 +91,7 @@ class FileImportViewModel @Inject constructor(
         if (months.isEmpty()) {
             _state.value = FileImportState.Error("No transactions found in this PDF.")
         } else {
-            _state.value = FileImportState.Preview(months)
+            _state.value = FileImportState.Preview(months, diagnosticReport)
         }
     }
 
@@ -251,7 +251,7 @@ sealed class FileImportState {
     object Idle : FileImportState()
     object Parsing : FileImportState()
     object OcrInProgress : FileImportState()
-    data class Preview(val months: List<MonthGroup>) : FileImportState() {
+    data class Preview(val months: List<MonthGroup>, val diagnosticReport: String? = null) : FileImportState() {
         val selectedCount: Int get() = months.filter { it.selected }.sumOf { it.transactions.size }
         val totalCount: Int get() = months.sumOf { it.transactions.size }
     }

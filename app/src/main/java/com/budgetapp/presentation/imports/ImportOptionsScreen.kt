@@ -2,17 +2,21 @@ package com.budgetapp.presentation.imports
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -289,6 +293,48 @@ private fun MonthPreviewContent(
         ) {
             items(preview.months, key = { it.key }) { month ->
                 MonthCard(month = month, onToggle = { viewModel.toggleMonth(month.key) })
+            }
+        }
+
+        // Parser diagnostic (bank-statement PDFs only) — collapsed by default
+        if (preview.diagnosticReport != null) {
+            var expanded by remember { mutableStateOf(false) }
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+            ) {
+                Column {
+                    TextButton(
+                        onClick = { expanded = !expanded },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(
+                            if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            "Parser Details (tap to ${if (expanded) "hide" else "show"})",
+                            style = MaterialTheme.typography.labelMedium
+                        )
+                    }
+                    if (expanded) {
+                        val scrollState = rememberScrollState()
+                        Text(
+                            text = preview.diagnosticReport,
+                            modifier = Modifier
+                                .padding(horizontal = 12.dp, vertical = 8.dp)
+                                .horizontalScroll(scrollState),
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 10.sp,
+                            lineHeight = 14.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
             }
         }
 
