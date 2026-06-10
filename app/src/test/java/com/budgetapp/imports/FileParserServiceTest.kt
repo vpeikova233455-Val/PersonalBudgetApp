@@ -482,7 +482,7 @@ class FileParserServiceTest {
         .getDeclaredMethod("isCreditCardPdf", String::class.java)
         .also { it.isAccessible = true }
     private val parseCreditCardPdfLineMethod = FileParserService::class.java
-        .getDeclaredMethod("parseCreditCardPdfLine", String::class.java, Double::class.java)
+        .getDeclaredMethod("parseCreditCardPdfLine", String::class.java, Int::class.java)
         .also { it.isAccessible = true }
     private val extractCCFromTextMethod = FileParserService::class.java
         .getDeclaredMethod("extractCreditCardTransactionsFromText", String::class.java)
@@ -490,8 +490,8 @@ class FileParserServiceTest {
 
     private fun isCCPdf(text: String) =
         isCreditCardPdfMethod.invoke(service, text) as Boolean
-    private fun parseCCPdfLine(line: String, chargeRel: Double = -1.0) =
-        parseCreditCardPdfLineMethod.invoke(service, line, chargeRel) as? ParsedTransaction
+    private fun parseCCPdfLine(line: String, chargeAbsPos: Int = -1) =
+        parseCreditCardPdfLineMethod.invoke(service, line, chargeAbsPos) as? ParsedTransaction
     @Suppress("UNCHECKED_CAST")
     private fun extractCCFromText(text: String) =
         extractCCFromTextMethod.invoke(service, text) as List<ParsedTransaction>
@@ -531,7 +531,7 @@ class FileParserServiceTest {
         // The "5" installment number must not be selected as amount.
         // With chargeRel pointing to the rightmost position (end of line), 245.00 or 20.42 is chosen.
         // We verify it is NOT 5.0 (the installment count).
-        val tx = parseCCPdfLine("01/05/2026  05/06/2026  פנגו-חניונים  245.00  5  12  20.42", chargeRel = 0.0)
+        val tx = parseCCPdfLine("01/05/2026  05/06/2026  פנגו-חניונים  245.00  5  12  20.42", chargeAbsPos = 0)
         assertNotNull(tx)
         assertNotEquals("Installment count must not be the amount", 5.0, tx!!.amount, 0.001)
     }
@@ -594,12 +594,12 @@ class FileParserServiceTest {
     // balance=rest) so the relative positions match exactly.
 
     private val extractBankFromTextMethod = FileParserService::class.java
-        .getDeclaredMethod("extractTransactionsFromText", String::class.java)
+        .getDeclaredMethod("extractTransactionsFromText", String::class.java, StringBuilder::class.java)
         .also { it.isAccessible = true }
 
     @Suppress("UNCHECKED_CAST")
     private fun extractBankFromText(text: String): List<ParsedTransaction> =
-        extractBankFromTextMethod.invoke(service, text) as List<ParsedTransaction>
+        extractBankFromTextMethod.invoke(service, text, null) as List<ParsedTransaction>
 
     private fun bankHeader(): String =
         "תאריך".padEnd(12) + "סוג תנועה".padEnd(18) + "אסמכתה".padEnd(9) +
@@ -754,6 +754,95 @@ class FileParserServiceTest {
         val tx = parse(listOf("12/03/2024", "זיכוי - בנק הפועלים", "732", "15000"), mapping)
         assertNotNull("Transaction must not be dropped", tx)
         assertEquals("Amount must be 732", 732.0, tx!!.amount, 0.001)
+    }
+
+    // ── Mizrahi-Tefahot: combined signed זכות/חובה column ────────────────────
+    //
+    // Mizrahi uses a single column for both credit and debit; negative amounts
+    // (leading '-') are EXPENSE, positive amounts are INCOME.
+    //
+    // Column order: date | זכות/חובה (amount) | יתרה בש"ח (balance) | אסמכתה (ref) | סוג תנועה (desc)
+    // Putting the amount column immediately after the date ensures that even short
+    // data rows keep the amount token at the same absolute offset as in the header,
+    // so the relative-position classifier stays in the credit zone.
+
+    private fun mizrahiHeader(): String =
+        "תאריך".padEnd(12) + "זכות/חובה".padEnd(16) +
+        "יתרה בש\"ח".padEnd(14) + "אסמכתה".padEnd(10) + "סוג תנועה"
+
+    // desc is NOT padded — it is the last column, so no trailing spaces and no trim artifact.
+    private fun mizrahiRow(date: String, amount: String, balance: String, ref: String, desc: String): String =
+        date.padEnd(12) + amount.padEnd(16) + balance.padEnd(14) + ref.padEnd(10) + desc
+
+    @Test
+    fun `Mizrahi - negative amount is EXPENSE`() {
+        val text = mizrahiHeader() + "\n" +
+            mizrahiRow("02/06/26", "-374.00", "25481.96", "6528", "העברה באינטרנט")
+        val txs = extractBankFromText(text)
+        assertEquals(1, txs.size)
+        assertEquals("Leading minus must be EXPENSE", TransactionType.EXPENSE, txs[0].type)
+        assertEquals(374.0, txs[0].amount, 0.001)
+    }
+
+    @Test
+    fun `Mizrahi - balance is not selected as expense amount`() {
+        val text = mizrahiHeader() + "\n" +
+            mizrahiRow("01/05/26", "-17199.03", "15303.96", "1642", "גולד מסטרקרד")
+        val txs = extractBankFromText(text)
+        assertEquals(1, txs.size)
+        assertEquals(17199.03, txs[0].amount, 0.001)
+        assertEquals(TransactionType.EXPENSE, txs[0].type)
+    }
+
+    @Test
+    fun `Mizrahi - positive amount without balance is INCOME`() {
+        val text = mizrahiHeader() + "\n" +
+            mizrahiRow("01/06/26", "22934.00", "", "99210", "משכורת")
+        val txs = extractBankFromText(text)
+        assertEquals(1, txs.size)
+        assertEquals(TransactionType.INCOME, txs[0].type)
+        assertEquals(22934.0, txs[0].amount, 0.001)
+    }
+
+    @Test
+    fun `Mizrahi - positive amount with balance is INCOME and balance is excluded`() {
+        val text = mizrahiHeader() + "\n" +
+            mizrahiRow("12/05/26", "2100.00", "36279.22", "93824", "כלל בריאות")
+        val txs = extractBankFromText(text)
+        assertEquals(1, txs.size)
+        assertEquals(TransactionType.INCOME, txs[0].type)
+        assertEquals(2100.0, txs[0].amount, 0.001)
+    }
+
+    @Test
+    fun `Mizrahi - full statement all transactions match expected types`() {
+        val text = mizrahiHeader() + "\n" +
+            mizrahiRow("02/06/26", "-374.00",   "25481.96", "6528",    "העברה באינטרנט") + "\n" +
+            mizrahiRow("01/06/26", "22934.00",  "",         "99210",   "משכורת") + "\n" +
+            mizrahiRow("01/06/26", "-150.00",   "",         "2105682", "דירה לילד") + "\n" +
+            mizrahiRow("01/06/26", "-7500.00",  "",         "31",      "העברה לבנק אחר") + "\n" +
+            mizrahiRow("01/05/26", "-17199.03", "15303.96", "1642",    "גולד מסטרקרד") + "\n" +
+            mizrahiRow("12/05/26", "9407.69",   "",         "93512",   "איילון ביטוח") + "\n" +
+            mizrahiRow("12/05/26", "2100.00",   "36279.22", "93824",   "כלל בריאות") + "\n" +
+            mizrahiRow("11/05/26", "9523.04",   "24771.53", "70556",   "הפניקס ביטוח")
+        val txs = extractBankFromText(text)
+        assertEquals("All 8 rows must be parsed", 8, txs.size)
+
+        data class Expected(val amount: Double, val type: TransactionType)
+        val expected = listOf(
+            Expected(374.0,     TransactionType.EXPENSE),
+            Expected(22934.0,   TransactionType.INCOME),
+            Expected(150.0,     TransactionType.EXPENSE),
+            Expected(7500.0,    TransactionType.EXPENSE),
+            Expected(17199.03,  TransactionType.EXPENSE),
+            Expected(9407.69,   TransactionType.INCOME),
+            Expected(2100.0,    TransactionType.INCOME),
+            Expected(9523.04,   TransactionType.INCOME),
+        )
+        txs.zip(expected).forEachIndexed { i, (tx, exp) ->
+            assertEquals("Row $i amount", exp.amount, tx.amount, 0.001)
+            assertEquals("Row $i type",   exp.type,   tx.type)
+        }
     }
 
     // ── CSV header row search (findHeaderRowIndexInCsv) ───────────────────────

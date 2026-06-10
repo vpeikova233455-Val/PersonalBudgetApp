@@ -286,7 +286,9 @@ class FileParserService @Inject constructor(
         // Each token carries both forms so they are available for the matching path
         // that needs them: rel for the main nearest-column check, absPos for the fallback.
         val lLen = line.length.coerceAtLeast(1).toDouble()
-        data class Tok(val v: Double, val rel: Double, val absPos: Int, val rawDigits: String)
+        // isNeg: true when the token is immediately preceded by '-' in the line.
+        // Used as a definitive EXPENSE signal for combined signed columns (e.g. Mizrahi זכות/חובה).
+        data class Tok(val v: Double, val rel: Double, val absPos: Int, val rawDigits: String, val isNeg: Boolean = false)
 
         AppLogger.d(IMPORT_TAG, "[ParseRow] lineLen=${line.length} | '${line.take(120)}'")
 
@@ -295,7 +297,8 @@ class FileParserService @Inject constructor(
             if (allDateRanges.any { r -> m.range.first in r || m.range.last in r }) return@mapNotNull null
             val v = parseAmount(m.value) ?: return@mapNotNull null
             if (v <= 0) return@mapNotNull null
-            Tok(v, m.range.first / lLen, m.range.first, m.value.replace(",", ""))
+            val isNeg = m.range.first > 0 && line[m.range.first - 1] == '-'
+            Tok(v, m.range.first / lLen, m.range.first, m.value.replace(",", ""), isNeg)
         }.toList()
 
         // Israeli bank amounts always use decimal notation (e.g. "732.00").
@@ -319,10 +322,23 @@ class FileParserService @Inject constructor(
             return null
         }
 
+        // Signed-column shortcut: a leading '-' on a decimal token is the definitive
+        // EXPENSE indicator for combined signed-amount columns (e.g. Mizrahi-Tefahot
+        // זכות/חובה).  Apply this before column-proximity logic, which is unreliable
+        // when debit and credit keywords share the same header position.
+        val negDecimalToks = decimalToks.filter { it.isNeg }
+
         val amount: Double
         val type: TransactionType
 
-        if (layout != null && (layout.hasDebit || layout.hasCredit)) {
+        if (negDecimalToks.isNotEmpty()) {
+            // Pick the negative decimal with the smallest absolute value to avoid
+            // accidentally selecting a negative running balance on the same row.
+            val tok = negDecimalToks.minByOrNull { it.v }!!
+            amount = tok.v
+            type   = TransactionType.EXPENSE
+            AppLogger.d(IMPORT_TAG, "  [Verdict] EXPENSE via leading-minus sign amt=$amount")
+        } else if (layout != null && (layout.hasDebit || layout.hasCredit)) {
             // Main column assignment uses RELATIVE (normalised) positions.
             // Numbers in data rows are right-aligned within their column cells; Hebrew
             // keywords are left-aligned.  A 7-char debit amount therefore starts between
@@ -454,7 +470,12 @@ class FileParserService @Inject constructor(
 
         val keep = BooleanArray(line.length) { true }
         allDateRanges.forEach { r -> r.forEach { if (it < line.length) keep[it] = false } }
-        PDF_NUM_FINDER.findAll(line).forEach { m -> m.range.forEach { if (it < line.length) keep[it] = false } }
+        PDF_NUM_FINDER.findAll(line).forEach { m ->
+            m.range.forEach { if (it < line.length) keep[it] = false }
+            // Also erase the leading '-' so it doesn't bleed into the description
+            val signPos = m.range.first - 1
+            if (signPos >= 0 && signPos < line.length && line[signPos] == '-') keep[signPos] = false
+        }
 
         val desc = line.filterIndexed { i, _ -> keep[i] }
             .replace(Regex("[₪\$€£₽]|ILS|NIS|USD|EUR|RUB"), "")
