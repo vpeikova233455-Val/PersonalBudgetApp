@@ -9,6 +9,7 @@ import com.budgetapp.core.util.AppLogger
 import dagger.hilt.android.qualifiers.ApplicationContext
 import org.apache.poi.ss.usermodel.Cell
 import org.apache.poi.ss.usermodel.CellType
+import org.apache.poi.ss.usermodel.DataFormatter
 import org.apache.poi.ss.usermodel.DateUtil
 import org.apache.poi.ss.usermodel.WorkbookFactory
 import org.apache.poi.xssf.usermodel.XSSFCell
@@ -708,10 +709,17 @@ class FileParserService @Inject constructor(
         val cell = row.getCell(colIdx)
         val fromColor = cellFontColorType(cell)
         if (fromColor != null) return fromColor
-        // For combined debit/credit columns: if color detection failed, use numeric sign
-        // (negative value = expense, positive = income). Doesn't apply to single-sided columns
-        // because there sign has no meaning — debit-only is always expense, credit-only is income.
+        // For combined debit/credit columns: if color detection failed, apply DataFormatter
+        // to get the cell's display text. Banks like Bank Discount store amounts as positive
+        // values and use a trailing-minus number format (e.g. "#,##0.##-") to mark debits.
+        // DataFormatter applies that format, turning 17199.03 into "17,199.03-" for expenses
+        // and "22934" into "22,934" for income — without needing to read the font color.
         if (mapping.amountColumn != null && mapping.debitColumn == null && mapping.creditColumn == null) {
+            val formatted = try { DataFormatter().formatCellValue(cell).trim() } catch (_: Exception) { "" }
+            AppLogger.d(IMPORT_TAG, "    [CellColor] formattedText='$formatted' trailingMinus=${formatted.endsWith("-")}")
+            if (formatted.endsWith("-")) return TransactionType.EXPENSE
+            // No trailing minus in the display format → income, unless the raw value is
+            // explicitly negative (handles banks that do store negative expense values).
             val v = try { (cell as? XSSFCell)?.numericCellValue } catch (_: Exception) { null }
             if (v != null && v != 0.0) return if (v < 0) TransactionType.EXPENSE else TransactionType.INCOME
         }
@@ -726,11 +734,13 @@ class FileParserService @Inject constructor(
         val xCell  = cell as? XSSFCell ?: return null
         val xStyle = xCell.cellStyle as? XSSFCellStyle ?: return null
 
-        // 1. Font color — direct RGB (3 bytes), then ARGB (4 bytes: alpha,R,G,B)
+        // 1. Font color — direct RGB, then ARGB, then getRGBWithTint() (resolves tinted theme colors)
         val xFont = xStyle.font as? XSSFFont
         val fontColor = xFont?.xssfColor
         if (fontColor != null) {
-            val rgb = fontColor.rgb ?: fontColor.argb?.let { if (it.size >= 4) it.copyOfRange(1, 4) else null }
+            val rgb = fontColor.rgb
+                ?: fontColor.argb?.let { if (it.size >= 4) it.copyOfRange(1, 4) else null }
+                ?: try { fontColor.getRGBWithTint() } catch (_: Exception) { null }
             if (rgb != null) {
                 val r = rgb[0].toInt() and 0xFF
                 val g = rgb[1].toInt() and 0xFF
@@ -739,14 +749,16 @@ class FileParserService @Inject constructor(
                 if (isRedColor(r, g, b))   return TransactionType.EXPENSE
                 if (isGreenColor(r, g, b)) return TransactionType.INCOME
             } else {
-                AppLogger.d(IMPORT_TAG, "    [CellColor] fontColor present but rgb=null (theme color or auto)")
+                AppLogger.d(IMPORT_TAG, "    [CellColor] fontColor present but rgb=null (theme color, tint unresolvable)")
             }
         }
 
         // 2. Cell fill foreground color — some formats color the cell background instead of font
         val fillColor = xStyle.fillForegroundXSSFColor
         if (fillColor != null) {
-            val rgb = fillColor.rgb ?: fillColor.argb?.let { if (it.size >= 4) it.copyOfRange(1, 4) else null }
+            val rgb = fillColor.rgb
+                ?: fillColor.argb?.let { if (it.size >= 4) it.copyOfRange(1, 4) else null }
+                ?: try { fillColor.getRGBWithTint() } catch (_: Exception) { null }
             if (rgb != null) {
                 val r = rgb[0].toInt() and 0xFF
                 val g = rgb[1].toInt() and 0xFF
