@@ -22,8 +22,8 @@ android {
         applicationId = "com.vpeikova.budgetapp"
         minSdk = 26
         targetSdk = 34
-        versionCode = 70
-        versionName = "3.1.10"
+        versionCode = 71
+        versionName = "3.1.11"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

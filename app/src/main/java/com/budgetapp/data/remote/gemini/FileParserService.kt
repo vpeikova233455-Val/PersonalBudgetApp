@@ -608,60 +608,94 @@ class FileParserService @Inject constructor(
 
     private fun parseExcelFile(uri: Uri): FileParseResult {
         return try {
-            val inputStream = context.contentResolver.openInputStream(uri)
-                ?: return FileParseResult.Error("Could not open file")
+            val mimeType = context.contentResolver.getType(uri)
+            AppLogger.d(IMPORT_TAG, "[Excel] parseExcelFile start — uri=$uri mimeType=$mimeType")
 
-            val workbook = WorkbookFactory.create(inputStream)
+            val inputStream = context.contentResolver.openInputStream(uri)
+            if (inputStream == null) {
+                AppLogger.e(IMPORT_TAG, "[Excel] Failed to open InputStream from ContentResolver")
+                return FileParseResult.Error("Could not open file")
+            }
+            AppLogger.d(IMPORT_TAG, "[Excel] InputStream opened OK")
+
+            val workbook = try {
+                WorkbookFactory.create(inputStream)
+            } catch (e: Exception) {
+                AppLogger.e(IMPORT_TAG, "[Excel] WorkbookFactory.create failed: ${e.javaClass.simpleName}: ${e.message}", e)
+                return FileParseResult.Error("Failed to open workbook: ${e.message}")
+            }
+            AppLogger.d(IMPORT_TAG, "[Excel] Workbook opened — sheets=${workbook.numberOfSheets} type=${workbook.javaClass.simpleName}")
+
             val transactions = mutableListOf<ParsedTransaction>()
 
-            // Iterate every sheet (banks sometimes export one sheet per month)
             for (sheetIndex in 0 until workbook.numberOfSheets) {
                 val sheet = workbook.getSheetAt(sheetIndex)
-                if (sheet.physicalNumberOfRows == 0) continue
+                AppLogger.d(IMPORT_TAG, "[Excel] Sheet[$sheetIndex] name='${sheet.sheetName}' physicalRows=${sheet.physicalNumberOfRows} lastRow=${sheet.lastRowNum}")
+                if (sheet.physicalNumberOfRows == 0) {
+                    AppLogger.d(IMPORT_TAG, "[Excel] Sheet[$sheetIndex] SKIPPED — no rows")
+                    continue
+                }
 
-                // Find the header row (first row that looks like column headers)
                 val headerRowIndex = findHeaderRow(sheet)
                 val headerRow = sheet.getRow(headerRowIndex)
                 val headers = headerRow?.map { cellText(it) } ?: emptyList()
+                AppLogger.d(IMPORT_TAG, "[Excel] Sheet[$sheetIndex] headerRow=$headerRowIndex headers=[${headers.joinToString(" | ")}]")
 
                 if (isCreditCardFormat(headers)) {
-                    // Credit card statement: every row is an EXPENSE;
-                    // use merchant + charge columns only, ignore everything else.
                     val ccMapping = detectCreditCardMapping(headers)
-                    if (!ccMapping.hasEnoughColumns()) continue
+                    AppLogger.d(IMPORT_TAG, "[Excel] Sheet[$sheetIndex] CC format: merchant=${ccMapping.merchantColumn} charge=${ccMapping.chargeColumn} hasEnough=${ccMapping.hasEnoughColumns()}")
+                    if (!ccMapping.hasEnoughColumns()) {
+                        AppLogger.w(IMPORT_TAG, "[Excel] Sheet[$sheetIndex] CC mapping insufficient — skipping")
+                        continue
+                    }
+                    var rowsParsed = 0; var rowsSkipped = 0
                     for (rowIndex in (headerRowIndex + 1)..sheet.lastRowNum) {
                         val row = sheet.getRow(rowIndex) ?: continue
                         if (row.physicalNumberOfCells == 0) continue
                         try {
                             val cells = (0 until row.lastCellNum).map { i -> cellText(row.getCell(i)) }
                             val parsed = parseCreditCardRow(cells, ccMapping)
-                            if (parsed != null) transactions.add(parsed)
-                        } catch (_: Exception) { }
+                            if (parsed != null) { transactions.add(parsed); rowsParsed++ } else rowsSkipped++
+                        } catch (e: Exception) {
+                            AppLogger.e(IMPORT_TAG, "[Excel] Sheet[$sheetIndex] row $rowIndex CC parse error: ${e.javaClass.simpleName}: ${e.message}")
+                            rowsSkipped++
+                        }
                     }
+                    AppLogger.d(IMPORT_TAG, "[Excel] Sheet[$sheetIndex] CC done — parsed=$rowsParsed skipped=$rowsSkipped")
                 } else {
-                    // Bank account statement
                     val mapping = detectColumnMapping(headers)
-                    if (!mapping.hasEnoughColumns()) continue
+                    AppLogger.d(IMPORT_TAG, "[Excel] Sheet[$sheetIndex] Bank format: hasEnough=${mapping.hasEnoughColumns()}")
+                    if (!mapping.hasEnoughColumns()) {
+                        AppLogger.w(IMPORT_TAG, "[Excel] Sheet[$sheetIndex] column mapping insufficient — skipping")
+                        continue
+                    }
+                    var rowsParsed = 0; var rowsSkipped = 0
                     for (rowIndex in (headerRowIndex + 1)..sheet.lastRowNum) {
                         val row = sheet.getRow(rowIndex) ?: continue
                         if (row.physicalNumberOfCells == 0) continue
                         try {
                             val parsed = parseExcelRow(row, mapping)
-                            if (parsed != null) transactions.add(parsed)
-                        } catch (_: Exception) { }
+                            if (parsed != null) { transactions.add(parsed); rowsParsed++ } else rowsSkipped++
+                        } catch (e: Exception) {
+                            AppLogger.e(IMPORT_TAG, "[Excel] Sheet[$sheetIndex] row $rowIndex parse error: ${e.javaClass.simpleName}: ${e.message}")
+                            rowsSkipped++
+                        }
                     }
+                    AppLogger.d(IMPORT_TAG, "[Excel] Sheet[$sheetIndex] Bank done — parsed=$rowsParsed skipped=$rowsSkipped")
                 }
             }
 
             workbook.close()
             inputStream.close()
 
+            AppLogger.d(IMPORT_TAG, "[Excel] parseExcelFile complete — total transactions=${transactions.size}")
             if (transactions.isEmpty())
                 FileParseResult.Error("No valid transactions found in file")
             else
                 FileParseResult.Success(transactions)
 
         } catch (e: Exception) {
+            AppLogger.e(IMPORT_TAG, "[Excel] parseExcelFile FATAL: ${e.javaClass.simpleName}: ${e.message}", e)
             FileParseResult.Error("Failed to parse Excel: ${e.message}")
         }
     }

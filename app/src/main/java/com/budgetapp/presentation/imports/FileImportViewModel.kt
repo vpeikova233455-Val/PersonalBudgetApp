@@ -46,13 +46,20 @@ class FileImportViewModel @Inject constructor(
     fun parseFile(uri: Uri) {
         viewModelScope.launch {
             _state.value = FileImportState.Parsing
+            AppLogger.d("FileImport", "parseFile start: uri=$uri")
             try {
                 val result = withContext(Dispatchers.IO) { fileParserService.parseFile(uri) }
+                AppLogger.d("FileImport", "parseFile result: ${result::class.simpleName}")
                 when (result) {
-                    is FileParseResult.Success -> showPreview(result.transactions, result.diagnosticReport)
+                    is FileParseResult.Success -> {
+                        AppLogger.d("FileImport", "parseFile success: ${result.transactions.size} transactions")
+                        showPreview(result.transactions, result.diagnosticReport)
+                    }
                     is FileParseResult.NeedsOcr -> {
+                        AppLogger.d("FileImport", "parseFile NeedsOcr — starting OCR")
                         _state.value = FileImportState.OcrInProgress
                         val transactions = withContext(Dispatchers.IO) { ocrPdfPages(uri) }
+                        AppLogger.d("FileImport", "OCR returned ${transactions.size} transactions")
                         if (transactions.isEmpty()) {
                             _state.value = FileImportState.Error(
                                 "Could not read transactions from this PDF.\n\n" +
@@ -63,9 +70,13 @@ class FileImportViewModel @Inject constructor(
                             showPreview(transactions)
                         }
                     }
-                    is FileParseResult.Error -> _state.value = FileImportState.Error(result.message)
+                    is FileParseResult.Error -> {
+                        AppLogger.e("FileImport", "parseFile error: ${result.message}")
+                        _state.value = FileImportState.Error(result.message)
+                    }
                 }
             } catch (e: Exception) {
+                AppLogger.e("FileImport", "parseFile exception: ${e.javaClass.simpleName}: ${e.message}", e)
                 val msg = e.message ?: "Unknown error"
                 val friendly = if (msg.contains("API key", ignoreCase = true))
                     "AI processing failed — Gemini API key is missing or invalid.\n\nAdd gemini.api.key=YOUR_KEY to local.properties and rebuild."
@@ -77,21 +88,41 @@ class FileImportViewModel @Inject constructor(
 
     private fun showPreview(transactions: List<ParsedTransaction>, diagnosticReport: String? = null) {
         AppLogger.d("FileImport", "Parser returned ${transactions.size} rows")
-        // Stage 1 complete — show every transaction as returned by the parser
         transactions.forEach { tx ->
             AppLogger.d("FileImport", "[Stage1-Parsed] desc='${tx.description}' | type=${tx.type} | amount=${tx.amount} | date=${tx.date}")
         }
-        // Stage 2/3 — row normalization and duplicate detection; neither changes type
-        val months = groupByMonth(transactions)
-        val shownCount = months.sumOf { it.transactions.size }
-        AppLogger.d("FileImport", "Review screen will show $shownCount rows in ${months.size} groups (parser→review delta: ${transactions.size - shownCount})")
-        months.flatMap { it.transactions }.forEach { tx ->
-            AppLogger.d("FileImport", "[Stage3-AfterDedup] desc='${tx.description}' | type=${tx.type} | amount=${tx.amount}")
-        }
-        if (months.isEmpty()) {
+        if (transactions.isEmpty()) {
             _state.value = FileImportState.Error("No transactions found in this PDF.")
-        } else {
-            _state.value = FileImportState.Preview(months, diagnosticReport)
+            return
+        }
+        // Save all parsed transactions to the DB immediately so they persist across app restarts.
+        viewModelScope.launch {
+            _state.value = FileImportState.Importing
+            try {
+                val userId = authRepository.getCurrentUserId() ?: ""
+                val pending = transactions.map { tx ->
+                    AppLogger.d("FileImport", "[Stage7-DBWrite] desc='${tx.description}' | type=${tx.type} | amount=${tx.amount}")
+                    PendingTransactionEntity(
+                        userId = userId,
+                        type = when (tx.type) {
+                            GeminiTransactionType.INCOME  -> EntityTransactionType.INCOME
+                            GeminiTransactionType.EXPENSE -> EntityTransactionType.EXPENSE
+                        },
+                        amount = tx.amount,
+                        description = tx.description,
+                        date = tx.date?.let { parseIsoDate(it) },
+                        sourceType = ImportSource.EXCEL,
+                        sourceUri = "",
+                        categoryConfidence = 0.3
+                    )
+                }
+                withContext(Dispatchers.IO) {
+                    pendingTransactionDao.insertPendingList(pending)
+                }
+                _state.value = FileImportState.Done(pending.size)
+            } catch (e: Exception) {
+                _state.value = FileImportState.Error(e.message ?: "Import failed")
+            }
         }
     }
 
@@ -122,123 +153,7 @@ class FileImportViewModel @Inject constructor(
         return transactions
     }
 
-    fun toggleMonth(key: String) {
-        val current = _state.value as? FileImportState.Preview ?: return
-        _state.value = current.copy(
-            months = current.months.map {
-                if (it.key == key) it.copy(selected = !it.selected) else it
-            }
-        )
-    }
-
-    fun selectAll() {
-        val current = _state.value as? FileImportState.Preview ?: return
-        _state.value = current.copy(months = current.months.map { it.copy(selected = true) })
-    }
-
-    fun deselectAll() {
-        val current = _state.value as? FileImportState.Preview ?: return
-        _state.value = current.copy(months = current.months.map { it.copy(selected = false) })
-    }
-
-    fun importSelected() {
-        val current = _state.value as? FileImportState.Preview ?: return
-        val selectedTransactions = current.months
-            .filter { it.selected }
-            .flatMap { it.transactions }
-
-        if (selectedTransactions.isEmpty()) return
-
-        viewModelScope.launch {
-            _state.value = FileImportState.Importing
-            try {
-                val userId = authRepository.getCurrentUserId() ?: ""
-                val pending = selectedTransactions.map { tx ->
-                    PendingTransactionEntity(
-                        userId = userId,
-                        type = when (tx.type) {
-                            GeminiTransactionType.INCOME  -> EntityTransactionType.INCOME
-                            GeminiTransactionType.EXPENSE -> EntityTransactionType.EXPENSE
-                        },
-                        amount = tx.amount,
-                        description = tx.description,
-                        date = tx.date?.let { parseIsoDate(it) },
-                        sourceType = ImportSource.EXCEL,
-                        sourceUri = "",
-                        categoryConfidence = 0.3
-                    )
-                }
-                // Stage 7 — type is set from parser output; no auto-categorization modifies it here
-                pending.forEach { p ->
-                    AppLogger.d("FileImport", "[Stage7-DBWrite] desc='${p.description}' | type=${p.type} | amount=${p.amount}")
-                }
-                withContext(Dispatchers.IO) {
-                    pendingTransactionDao.insertPendingList(pending)
-                }
-                _state.value = FileImportState.Done(pending.size)
-            } catch (e: Exception) {
-                _state.value = FileImportState.Error(e.message ?: "Import failed")
-            }
-        }
-    }
-
     fun resetState() { _state.value = FileImportState.Idle }
-
-    // ── Helpers ───────────────────────────────────────────────────────────────
-
-    private fun groupByMonth(transactions: List<ParsedTransaction>): List<MonthGroup> {
-        val duplicateKeys = transactions
-            .groupBy { "${it.date}_${it.amount}" }
-            .filter { it.value.size > 1 }
-            .keys
-
-        val (dated, undated) = transactions.partition { it.date != null }
-
-        val groups = dated
-            .groupBy { yearMonth(it.date!!) }
-            .entries
-            .sortedBy { it.key }
-            .map { (key, txs) ->
-                val dupCount = txs.count { "${it.date}_${it.amount}" in duplicateKeys }
-                MonthGroup(
-                    key = key,
-                    displayName = formatMonthName(key),
-                    transactions = txs,
-                    totalAmount = txs.sumOf { it.amount },
-                    expenseCount = txs.count { it.type == GeminiTransactionType.EXPENSE },
-                    incomeCount = txs.count { it.type == GeminiTransactionType.INCOME },
-                    duplicateCount = dupCount
-                )
-            }
-            .toMutableList()
-
-        if (undated.isNotEmpty()) {
-            groups.add(
-                MonthGroup(
-                    key = "unknown",
-                    displayName = "Unknown date",
-                    transactions = undated,
-                    totalAmount = undated.sumOf { it.amount },
-                    expenseCount = undated.count { it.type == GeminiTransactionType.EXPENSE },
-                    incomeCount = undated.count { it.type == GeminiTransactionType.INCOME },
-                    selected = false
-                )
-            )
-        }
-
-        return groups
-    }
-
-    private fun yearMonth(isoDate: String): String =
-        isoDate.take(7) // "yyyy-MM"
-
-    private fun formatMonthName(key: String): String {
-        if (key == "unknown") return "Unknown date"
-        return try {
-            val date = SimpleDateFormat("yyyy-MM", Locale.ENGLISH).parse(key)!!
-            SimpleDateFormat("MMMM yyyy", Locale.ENGLISH).format(date)
-        } catch (_: Exception) { key }
-    }
 
     private fun parseIsoDate(isoDate: String): Long? = try {
         SimpleDateFormat("yyyy-MM-dd", Locale.US).parse(isoDate)?.time
@@ -251,22 +166,7 @@ sealed class FileImportState {
     object Idle : FileImportState()
     object Parsing : FileImportState()
     object OcrInProgress : FileImportState()
-    data class Preview(val months: List<MonthGroup>, val diagnosticReport: String? = null) : FileImportState() {
-        val selectedCount: Int get() = months.filter { it.selected }.sumOf { it.transactions.size }
-        val totalCount: Int get() = months.sumOf { it.transactions.size }
-    }
     object Importing : FileImportState()
     data class Done(val importedCount: Int) : FileImportState()
     data class Error(val message: String) : FileImportState()
 }
-
-data class MonthGroup(
-    val key: String,
-    val displayName: String,
-    val transactions: List<ParsedTransaction>,
-    val totalAmount: Double,
-    val expenseCount: Int,
-    val incomeCount: Int,
-    val selected: Boolean = true,
-    val duplicateCount: Int = 0
-)
