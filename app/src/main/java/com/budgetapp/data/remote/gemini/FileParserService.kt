@@ -616,10 +616,26 @@ class FileParserService @Inject constructor(
                 AppLogger.e(IMPORT_TAG, "[Excel] Failed to open InputStream from ContentResolver")
                 return FileParseResult.Error("Could not open file")
             }
-            AppLogger.d(IMPORT_TAG, "[Excel] InputStream opened OK")
+            // ContentResolver streams from Google Drive and other providers do not support
+            // mark/reset, which WorkbookFactory needs to detect the file format (XLS vs XLSX).
+            // Reading everything into a ByteArrayInputStream guarantees mark/reset support.
+            val bytes = inputStream.use { it.readBytes() }
+            AppLogger.d(IMPORT_TAG, "[Excel] InputStream read — ${bytes.size} bytes")
+
+            // Detect HTML-disguised Excel files — common with Israeli banks (Bank Leumi, etc.)
+            // that export statements as HTML tables with an .xls extension.
+            // Magic: UTF-8 BOM (EF BB BF) followed by '<', or a bare '<' at offset 0.
+            val isHtml = bytes.size > 3 && (
+                (bytes[0] == 0xEF.toByte() && bytes[1] == 0xBB.toByte() && bytes[2] == 0xBF.toByte() && bytes[3] == '<'.code.toByte()) ||
+                bytes[0] == '<'.code.toByte()
+            )
+            if (isHtml) {
+                AppLogger.d(IMPORT_TAG, "[Excel] HTML magic bytes detected — routing to HTML table parser")
+                return parseHtmlExcelFile(bytes)
+            }
 
             val workbook = try {
-                WorkbookFactory.create(inputStream)
+                WorkbookFactory.create(java.io.ByteArrayInputStream(bytes))
             } catch (e: Exception) {
                 AppLogger.e(IMPORT_TAG, "[Excel] WorkbookFactory.create failed: ${e.javaClass.simpleName}: ${e.message}", e)
                 return FileParseResult.Error("Failed to open workbook: ${e.message}")
@@ -686,7 +702,6 @@ class FileParserService @Inject constructor(
             }
 
             workbook.close()
-            inputStream.close()
 
             AppLogger.d(IMPORT_TAG, "[Excel] parseExcelFile complete — total transactions=${transactions.size}")
             if (transactions.isEmpty())
@@ -698,6 +713,67 @@ class FileParserService @Inject constructor(
             AppLogger.e(IMPORT_TAG, "[Excel] parseExcelFile FATAL: ${e.javaClass.simpleName}: ${e.message}", e)
             FileParseResult.Error("Failed to parse Excel: ${e.message}")
         }
+    }
+
+    /**
+     * Parse an HTML file that uses <table>/<tr>/<td> structure as exported by Israeli banks
+     * (Bank Leumi and others) with an .xls extension.
+     */
+    private fun parseHtmlExcelFile(bytes: ByteArray): FileParseResult {
+        val html = String(bytes, Charsets.UTF_8).trimStart('﻿') // strip UTF-8 BOM
+
+        val tagRe   = Regex("<[^>]+>")
+        val tableRe = Regex("<table[^>]*>(.*?)</table>", setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE))
+        val rowRe   = Regex("<tr[^>]*>(.*?)</tr>",       setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE))
+        val cellRe  = Regex("<td[^>]*>(.*?)</td>",       setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE))
+
+        fun cellText(raw: String): String = tagRe.replace(raw, "")
+            .replace("&nbsp;", " ").replace("&amp;", "&")
+            .replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"")
+            .replace(Regex("&#\\d+;"))  { m -> m.value.removeSurrounding("&#", ";").toIntOrNull()?.toChar()?.toString() ?: "" }
+            .trim()
+
+        val transactions = mutableListOf<ParsedTransaction>()
+
+        for (tableMatch in tableRe.findAll(html)) {
+            val rows = rowRe.findAll(tableMatch.groupValues[1])
+                .map { rowMatch -> cellRe.findAll(rowMatch.groupValues[1]).map { cellText(it.groupValues[1]) }.toList() }
+                .toList()
+            if (rows.isEmpty()) continue
+
+            // Find the header row — first row where 2+ cells match known column keywords
+            val headerIdx = rows.indexOfFirst { row ->
+                row.count { cell ->
+                    val h = cell.lowercase()
+                    DATE_KEYWORDS.any { h.contains(it) }  || DESC_KEYWORDS.any { h.contains(it) } ||
+                    DEBIT_KEYWORDS.any { h.contains(it) } || CREDIT_KEYWORDS.any { h.contains(it) } ||
+                    AMOUNT_KEYWORDS.any { h.contains(it) }
+                } >= 2
+            }
+            if (headerIdx < 0) continue
+
+            val mapping = detectColumnMapping(rows[headerIdx])
+            AppLogger.d(IMPORT_TAG, "[HTML-Excel] table found — headerRow=$headerIdx hasEnough=${mapping.hasEnoughColumns()} headers=${rows[headerIdx]}")
+            if (!mapping.hasEnoughColumns()) continue
+
+            var parsed = 0; var skipped = 0
+            for (rowIndex in (headerIdx + 1) until rows.size) {
+                try {
+                    val tx = parseRowData(rows[rowIndex], mapping)
+                    if (tx != null) { transactions.add(tx); parsed++ } else skipped++
+                } catch (e: Exception) {
+                    AppLogger.e(IMPORT_TAG, "[HTML-Excel] row $rowIndex error: ${e.message}")
+                    skipped++
+                }
+            }
+            AppLogger.d(IMPORT_TAG, "[HTML-Excel] table done — parsed=$parsed skipped=$skipped")
+        }
+
+        AppLogger.d(IMPORT_TAG, "[HTML-Excel] total transactions=${transactions.size}")
+        return if (transactions.isEmpty())
+            FileParseResult.Error("No valid transactions found in file")
+        else
+            FileParseResult.Success(transactions)
     }
 
     /** Scan the first 10 rows for the one most likely to be a header. */
