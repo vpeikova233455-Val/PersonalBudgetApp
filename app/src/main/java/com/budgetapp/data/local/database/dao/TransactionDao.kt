@@ -65,6 +65,12 @@ interface TransactionDao {
 
     @Query("UPDATE transactions SET syncStatus = :status WHERE id = :transactionId")
     suspend fun updateSyncStatus(transactionId: String, status: SyncStatus)
+
+    @Query("UPDATE transactions SET date = :newDate WHERE id = :id")
+    suspend fun updateDateById(id: String, newDate: Long)
+
+    @Query("SELECT id, date, amount, description FROM transactions WHERE userId = :userId AND date < :cutoff")
+    suspend fun getTransactionsWithDateBefore(userId: String, cutoff: Long): List<TxDateDebug>
 }
 
 data class TxDateDebug(val id: String, val date: Long, val amount: Double, val description: String)

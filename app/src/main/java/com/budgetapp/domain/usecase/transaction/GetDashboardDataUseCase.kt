@@ -12,23 +12,28 @@ import javax.inject.Inject
 class GetDashboardDataUseCase @Inject constructor(
     private val transactionRepository: TransactionRepository
 ) {
-    operator fun invoke(userId: String, year: Int, month: Int): Flow<DashboardData> {
-        val start = Calendar.getInstance().apply {
-            set(Calendar.YEAR, year)
-            set(Calendar.MONTH, month)
-            set(Calendar.DAY_OF_MONTH, 1)
-            set(Calendar.HOUR_OF_DAY, 0)
-            set(Calendar.MINUTE, 0)
-            set(Calendar.SECOND, 0)
-            set(Calendar.MILLISECOND, 0)
+    operator fun invoke(userId: String, year: Int, month: Int, allTime: Boolean = false): Flow<DashboardData> {
+        val monthStart: Long
+        val monthEnd: Long
+        if (allTime) {
+            // Half the long range to keep arithmetic safe; covers any real timestamp.
+            monthStart = Long.MIN_VALUE / 2
+            monthEnd   = Long.MAX_VALUE / 2
+        } else {
+            val start = Calendar.getInstance().apply {
+                set(Calendar.YEAR, year)
+                set(Calendar.MONTH, month)
+                set(Calendar.DAY_OF_MONTH, 1)
+                set(Calendar.HOUR_OF_DAY, 0)
+                set(Calendar.MINUTE, 0)
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+            }
+            monthStart = start.timeInMillis
+            monthEnd = (start.clone() as Calendar).apply { add(Calendar.MONTH, 1) }.timeInMillis
         }
-        val monthStart = start.timeInMillis
-        val monthEnd = (start.clone() as Calendar).apply { add(Calendar.MONTH, 1) }.timeInMillis
 
-        // Single-flow approach: all three numbers (income, expenses, balance) are derived
-        // from the same list emission so they are always in sync with each other and with
-        // the transaction list shown on screen.
-        AppLogger.d(TAG, "Querying dashboard data for year=$year month=$month [${monthStart}..${monthEnd})")
+        AppLogger.d(TAG, "Querying dashboard data for year=$year month=$month allTime=$allTime [$monthStart..$monthEnd)")
 
         return transactionRepository.getTransactionsByDateRange(userId, monthStart, monthEnd)
             .map { transactions ->
@@ -37,6 +42,9 @@ class GetDashboardDataUseCase @Inject constructor(
                 val totalIncome  = incomeList.sumOf  { it.amount }
                 val totalExpenses = expenseList.sumOf { it.amount }
                 val categoryBreakdown = expenseList
+                    .groupBy { it.category }
+                    .mapValues { (_, txns) -> txns.sumOf { it.amount } }
+                val incomeBreakdown = incomeList
                     .groupBy { it.category }
                     .mapValues { (_, txns) -> txns.sumOf { it.amount } }
 
@@ -53,7 +61,9 @@ class GetDashboardDataUseCase @Inject constructor(
                     totalExpenses = totalExpenses,
                     balance = totalIncome - totalExpenses,
                     recentTransactions = transactions,
-                    categoryBreakdown = categoryBreakdown
+                    categoryBreakdown = categoryBreakdown,
+                    incomeBreakdown = incomeBreakdown,
+                    transactionCount = transactions.size
                 )
             }
     }

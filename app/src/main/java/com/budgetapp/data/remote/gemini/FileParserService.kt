@@ -1266,6 +1266,12 @@ class FileParserService @Inject constructor(
                 val sdf = SimpleDateFormat(fmt, Locale.ENGLISH)
                 sdf.isLenient = false
                 val date = sdf.parse(cleaned) ?: continue
+                // Sanity check: a "yyyy" format can incorrectly accept a 2-digit year
+                // (e.g. "01/05/26" → year 26 AD). Reject anything outside a sane range
+                // and let the next, shorter-year format try.
+                val cal = java.util.Calendar.getInstance().apply { time = date }
+                val year = cal.get(java.util.Calendar.YEAR)
+                if (year < 1990 || year > 2100) continue
                 return SimpleDateFormat("yyyy-MM-dd", Locale.US).format(date)
             } catch (_: Exception) { }
         }

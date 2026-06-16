@@ -161,6 +161,16 @@ fun DashboardScreen(
                             modifier = Modifier.fillMaxSize(),
                             contentPadding = PaddingValues(bottom = 16.dp)
                         ) {
+                            // Monthly / All-Time toggle — gives users a one-tap way to see
+                            // totals regardless of how transaction dates ended up stored.
+                            item {
+                                ScopeToggle(
+                                    isAllTime = state.isAllTimeMode,
+                                    onToggle = viewModel::toggleAllTimeMode,
+                                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)
+                                )
+                            }
+
                             // Balance card
                             item {
                                 BalanceCard(
@@ -168,8 +178,8 @@ fun DashboardScreen(
                                     income = data.totalIncome,
                                     expenses = data.totalExpenses,
                                     monthLabel = viewModel.selectedMonthLabel(),
-                                    onPreviousMonth = viewModel::previousMonth,
-                                    onNextMonth = viewModel::nextMonth,
+                                    onPreviousMonth = if (state.isAllTimeMode) null else viewModel::previousMonth,
+                                    onNextMonth = if (state.isAllTimeMode) null else viewModel::nextMonth,
                                     modifier = Modifier.padding(horizontal = 20.dp)
                                 )
                             }
@@ -186,10 +196,10 @@ fun DashboardScreen(
                                 }
                             }
 
-                            // All-time totals — visible whenever there is any data at all.
-                            // Ensures income is reflected even when the selected month happens to
-                            // have none (e.g. income transactions stored in a different month).
-                            if (state.allTimeIncome > 0 || state.allTimeExpense > 0) {
+                            // All-time totals — visible when in monthly mode (in all-time mode the
+                            // BalanceCard above already shows all-time numbers, so this card would
+                            // be redundant).
+                            if (!state.isAllTimeMode && (state.allTimeIncome > 0 || state.allTimeExpense > 0)) {
                                 item {
                                     Spacer(modifier = Modifier.height(12.dp))
                                     AllTimeTotalsCard(
@@ -201,15 +211,15 @@ fun DashboardScreen(
                             }
 
                             // "Income exists but not in this month" hint — show when there's
-                            // all-time income but this month has none.
-                            if (data.totalIncome == 0.0 && state.allTimeIncome > 0) {
+                            // all-time income but this month has none (only in monthly mode).
+                            if (!state.isAllTimeMode && data.totalIncome == 0.0 && state.allTimeIncome > 0) {
                                 item {
                                     Spacer(modifier = Modifier.height(12.dp))
                                     IncomeElsewhereBanner(
                                         modifier = Modifier.padding(horizontal = 20.dp)
                                     )
                                 }
-                            } else if (data.totalExpenses > 0 && data.totalIncome == 0.0 && state.allTimeIncome == 0.0 && state.pendingCount == 0) {
+                            } else if (!state.isAllTimeMode && data.totalExpenses > 0 && data.totalIncome == 0.0 && state.allTimeIncome == 0.0 && state.pendingCount == 0) {
                                 // No income anywhere — invite user to import bank statement.
                                 item {
                                     Spacer(modifier = Modifier.height(12.dp))
@@ -228,6 +238,34 @@ fun DashboardScreen(
                                         totalExpenses = data.totalExpenses,
                                         totalIncome = data.totalIncome,
                                         spendingRatio = spendingRatio,
+                                        modifier = Modifier.padding(horizontal = 20.dp)
+                                    )
+                                }
+                            }
+
+                            // Category breakdown — top spending categories with bars + percentage.
+                            if (data.totalExpenses > 0 && data.categoryBreakdown.isNotEmpty()) {
+                                item {
+                                    Spacer(modifier = Modifier.height(16.dp))
+                                    CategoryBreakdownCard(
+                                        title = "Where Your Money Goes",
+                                        breakdown = data.categoryBreakdown,
+                                        total = data.totalExpenses,
+                                        accent = ExpenseRed,
+                                        modifier = Modifier.padding(horizontal = 20.dp)
+                                    )
+                                }
+                            }
+
+                            // Income sources — broken down by category (Salary, Refunds, etc.).
+                            if (data.totalIncome > 0 && data.incomeBreakdown.isNotEmpty()) {
+                                item {
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    CategoryBreakdownCard(
+                                        title = "Where Your Money Comes From",
+                                        breakdown = data.incomeBreakdown,
+                                        total = data.totalIncome,
+                                        accent = IncomeGreen,
                                         modifier = Modifier.padding(horizontal = 20.dp)
                                     )
                                 }
@@ -311,8 +349,8 @@ private fun BalanceCard(
     income: Double,
     expenses: Double,
     monthLabel: String,
-    onPreviousMonth: () -> Unit,
-    onNextMonth: () -> Unit,
+    onPreviousMonth: (() -> Unit)?,
+    onNextMonth: (() -> Unit)?,
     modifier: Modifier = Modifier
 ) {
     Box(
@@ -335,8 +373,12 @@ private fun BalanceCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(onClick = onPreviousMonth, modifier = Modifier.size(32.dp)) {
-                    Icon(Icons.Default.ChevronLeft, contentDescription = "Previous", tint = Color.White.copy(alpha = 0.8f))
+                if (onPreviousMonth != null) {
+                    IconButton(onClick = onPreviousMonth, modifier = Modifier.size(32.dp)) {
+                        Icon(Icons.Default.ChevronLeft, contentDescription = "Previous", tint = Color.White.copy(alpha = 0.8f))
+                    }
+                } else {
+                    Spacer(modifier = Modifier.size(32.dp))
                 }
                 Text(
                     text = monthLabel,
@@ -344,8 +386,12 @@ private fun BalanceCard(
                     color = Color.White.copy(alpha = 0.9f),
                     fontWeight = FontWeight.Medium
                 )
-                IconButton(onClick = onNextMonth, modifier = Modifier.size(32.dp)) {
-                    Icon(Icons.Default.ChevronRight, contentDescription = "Next", tint = Color.White.copy(alpha = 0.8f))
+                if (onNextMonth != null) {
+                    IconButton(onClick = onNextMonth, modifier = Modifier.size(32.dp)) {
+                        Icon(Icons.Default.ChevronRight, contentDescription = "Next", tint = Color.White.copy(alpha = 0.8f))
+                    }
+                } else {
+                    Spacer(modifier = Modifier.size(32.dp))
                 }
             }
 
@@ -526,6 +572,89 @@ private fun StyledTransactionItem(
                 color = if (transaction.type == TransactionType.INCOME) IncomeGreen else ExpenseRed
             )
         }
+    }
+}
+
+@Composable
+private fun CategoryBreakdownCard(
+    title: String,
+    breakdown: Map<com.budgetapp.domain.model.Category, Double>,
+    total: Double,
+    accent: Color,
+    modifier: Modifier = Modifier
+) {
+    val sorted = breakdown.entries.sortedByDescending { it.value }.take(8)
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 1.dp
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(12.dp))
+            sorted.forEach { (category, amount) ->
+                val pct = if (total > 0) (amount / total).toFloat() else 0f
+                Column(modifier = Modifier.padding(vertical = 4.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                            Text(text = category.icon, fontSize = 16.sp)
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                category.name,
+                                style = MaterialTheme.typography.bodyMedium,
+                                maxLines = 1
+                            )
+                        }
+                        Text(
+                            "${amount.toCurrency()} · ${(pct * 100).toInt()}%",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    LinearProgressIndicator(
+                        progress = { pct },
+                        modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
+                        color = accent,
+                        trackColor = accent.copy(alpha = 0.15f)
+                    )
+                }
+            }
+            if (breakdown.size > 8) {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "+${breakdown.size - 8} more categories",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ScopeToggle(isAllTime: Boolean, onToggle: () -> Unit, modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        FilterChip(
+            selected = !isAllTime,
+            onClick = { if (isAllTime) onToggle() },
+            label = { Text("This Month") },
+            modifier = Modifier.weight(1f)
+        )
+        FilterChip(
+            selected = isAllTime,
+            onClick = { if (!isAllTime) onToggle() },
+            label = { Text("All Time") },
+            modifier = Modifier.weight(1f)
+        )
     }
 }
 
