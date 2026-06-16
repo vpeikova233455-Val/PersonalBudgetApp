@@ -25,6 +25,7 @@ import com.budgetapp.presentation.bugreport.BugReportButton
 import com.budgetapp.presentation.category.CategoriesScreen
 import com.budgetapp.presentation.components.BottomNavBar
 import com.budgetapp.presentation.dashboard.DashboardScreen
+import com.budgetapp.presentation.drilldown.TransactionDrillDownScreen
 import com.budgetapp.presentation.imports.ImportOptionsScreen
 import com.budgetapp.presentation.imports.OcrImportViewModel
 import com.budgetapp.presentation.imports.ReviewTransactionsScreen
@@ -88,7 +89,8 @@ fun AppNavigation() {
                         onNavigateToSettings = { navController.navigate("settings") },
                         onNavigateToImport = { navController.navigate("import_options") },
                         onNavigateToReview = { navController.navigate("review_transactions") },
-                        onTransactionClick = { navController.navigate("edit_transaction/$it") }
+                        onTransactionClick = { navController.navigate("edit_transaction/$it") },
+                        onNavigateToDrillDown = { route -> navController.navigate(route) }
                     )
                 }
 
@@ -155,6 +157,24 @@ fun AppNavigation() {
                     ReviewTransactionsScreen(
                         onNavigateBack = { navController.popBackStack() },
                         onAllApproved = { navController.popBackStack() }
+                    )
+                }
+
+                composable(
+                    route = "drilldown?type={type}&year={year}&month={month}&allTime={allTime}&categoryId={categoryId}&descPattern={descPattern}&title={title}",
+                    arguments = listOf(
+                        navArgument("type") { type = NavType.StringType; defaultValue = "ALL" },
+                        navArgument("year") { type = NavType.IntType; defaultValue = -1 },
+                        navArgument("month") { type = NavType.IntType; defaultValue = -1 },
+                        navArgument("allTime") { type = NavType.BoolType; defaultValue = false },
+                        navArgument("categoryId") { type = NavType.LongType; defaultValue = -1L },
+                        navArgument("descPattern") { type = NavType.StringType; defaultValue = "" },
+                        navArgument("title") { type = NavType.StringType; defaultValue = "Transactions" }
+                    )
+                ) {
+                    TransactionDrillDownScreen(
+                        onNavigateBack = { navController.popBackStack() },
+                        onTransactionClick = { navController.navigate("edit_transaction/$it") }
                     )
                 }
             }

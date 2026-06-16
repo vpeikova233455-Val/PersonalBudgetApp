@@ -53,10 +53,12 @@ fun DashboardScreen(
     onNavigateToImport: () -> Unit,
     onNavigateToReview: () -> Unit,
     onTransactionClick: (String) -> Unit,
+    onNavigateToDrillDown: (route: String) -> Unit,
     viewModel: DashboardViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val pullToRefreshState = rememberPullToRefreshState()
+    val selectedYearMonth by viewModel.selectedYearMonth.collectAsState()
 
     LaunchedEffect(pullToRefreshState.isRefreshing) {
         if (pullToRefreshState.isRefreshing) viewModel.refresh()
@@ -171,8 +173,10 @@ fun DashboardScreen(
                                 )
                             }
 
-                            // Balance card
+                            // Balance card — income / expense numbers are tappable and open
+                            // the drill-down screen scoped to the current month (or all-time).
                             item {
+                                val (yr, mo) = selectedYearMonth
                                 BalanceCard(
                                     balance = data.balance,
                                     income = data.totalIncome,
@@ -180,6 +184,24 @@ fun DashboardScreen(
                                     monthLabel = viewModel.selectedMonthLabel(),
                                     onPreviousMonth = if (state.isAllTimeMode) null else viewModel::previousMonth,
                                     onNextMonth = if (state.isAllTimeMode) null else viewModel::nextMonth,
+                                    onIncomeClick = if (data.totalIncome > 0) ({
+                                        onNavigateToDrillDown(drillRoute(
+                                            type = "INCOME",
+                                            year = if (state.isAllTimeMode) -1 else yr,
+                                            month = if (state.isAllTimeMode) -1 else mo,
+                                            allTime = state.isAllTimeMode,
+                                            title = "Income · ${viewModel.selectedMonthLabel()}"
+                                        ))
+                                    }) else null,
+                                    onExpensesClick = if (data.totalExpenses > 0) ({
+                                        onNavigateToDrillDown(drillRoute(
+                                            type = "EXPENSE",
+                                            year = if (state.isAllTimeMode) -1 else yr,
+                                            month = if (state.isAllTimeMode) -1 else mo,
+                                            allTime = state.isAllTimeMode,
+                                            title = "Expenses · ${viewModel.selectedMonthLabel()}"
+                                        ))
+                                    }) else null,
                                     modifier = Modifier.padding(horizontal = 20.dp)
                                 )
                             }
@@ -198,13 +220,19 @@ fun DashboardScreen(
 
                             // All-time totals — visible when in monthly mode (in all-time mode the
                             // BalanceCard above already shows all-time numbers, so this card would
-                            // be redundant).
+                            // be redundant). Each line drills into the all-time list for that type.
                             if (!state.isAllTimeMode && (state.allTimeIncome > 0 || state.allTimeExpense > 0)) {
                                 item {
                                     Spacer(modifier = Modifier.height(12.dp))
                                     AllTimeTotalsCard(
                                         income = state.allTimeIncome,
                                         expense = state.allTimeExpense,
+                                        onIncomeClick = if (state.allTimeIncome > 0) ({
+                                            onNavigateToDrillDown(drillRoute("INCOME", -1, -1, true, title = "All-Time Income"))
+                                        }) else null,
+                                        onExpenseClick = if (state.allTimeExpense > 0) ({
+                                            onNavigateToDrillDown(drillRoute("EXPENSE", -1, -1, true, title = "All-Time Expenses"))
+                                        }) else null,
                                         modifier = Modifier.padding(horizontal = 20.dp)
                                     )
                                 }
@@ -244,17 +272,27 @@ fun DashboardScreen(
                             }
 
                             // Expected this month — recurring patterns due in the current view.
+                            // Each row drills into the historical transactions of that pattern.
                             if (!state.isAllTimeMode && data.expectedThisMonth.isNotEmpty()) {
                                 item {
                                     Spacer(modifier = Modifier.height(12.dp))
                                     ExpectedPaymentsCard(
                                         expected = data.expectedThisMonth,
+                                        onRowClick = { p ->
+                                            onNavigateToDrillDown(drillRoute(
+                                                type = if (p.type == com.budgetapp.data.local.entity.TransactionType.INCOME) "INCOME" else "EXPENSE",
+                                                allTime = true,
+                                                descPattern = p.sampleDescription,
+                                                title = "Expected · ${p.sampleDescription}"
+                                            ))
+                                        },
                                         modifier = Modifier.padding(horizontal = 20.dp)
                                     )
                                 }
                             }
 
                             // Recurring income & expenses (subscriptions, salary, mortgage, …)
+                            // — each row drills into the transactions matching that pattern.
                             val recurring = data.recurringIncome + data.recurringExpenses
                             if (recurring.isNotEmpty()) {
                                 item {
@@ -262,12 +300,22 @@ fun DashboardScreen(
                                     RecurringPatternsCard(
                                         income = data.recurringIncome,
                                         expenses = data.recurringExpenses,
+                                        onRowClick = { p ->
+                                            onNavigateToDrillDown(drillRoute(
+                                                type = if (p.type == com.budgetapp.data.local.entity.TransactionType.INCOME) "INCOME" else "EXPENSE",
+                                                allTime = true,
+                                                descPattern = p.sampleDescription,
+                                                title = "Recurring · ${p.sampleDescription}"
+                                            ))
+                                        },
                                         modifier = Modifier.padding(horizontal = 20.dp)
                                     )
                                 }
                             }
 
-                            // Category breakdown — top spending categories with bars + percentage.
+                            // Category breakdown — tappable rows: open inline subset of category
+                            // transactions, or jump to the full drill-down screen.
+                            val (yr, mo) = selectedYearMonth
                             if (data.totalExpenses > 0 && data.categoryBreakdown.isNotEmpty()) {
                                 item {
                                     Spacer(modifier = Modifier.height(16.dp))
@@ -276,12 +324,22 @@ fun DashboardScreen(
                                         breakdown = data.categoryBreakdown,
                                         total = data.totalExpenses,
                                         accent = ExpenseRed,
+                                        onRowClick = { cat ->
+                                            onNavigateToDrillDown(drillRoute(
+                                                type = "EXPENSE",
+                                                year = if (state.isAllTimeMode) -1 else yr,
+                                                month = if (state.isAllTimeMode) -1 else mo,
+                                                allTime = state.isAllTimeMode,
+                                                categoryId = cat.id,
+                                                title = "${cat.icon} ${cat.name}"
+                                            ))
+                                        },
                                         modifier = Modifier.padding(horizontal = 20.dp)
                                     )
                                 }
                             }
 
-                            // Income sources — broken down by category (Salary, Refunds, etc.).
+                            // Income sources — same treatment.
                             if (data.totalIncome > 0 && data.incomeBreakdown.isNotEmpty()) {
                                 item {
                                     Spacer(modifier = Modifier.height(12.dp))
@@ -290,6 +348,16 @@ fun DashboardScreen(
                                         breakdown = data.incomeBreakdown,
                                         total = data.totalIncome,
                                         accent = IncomeGreen,
+                                        onRowClick = { cat ->
+                                            onNavigateToDrillDown(drillRoute(
+                                                type = "INCOME",
+                                                year = if (state.isAllTimeMode) -1 else yr,
+                                                month = if (state.isAllTimeMode) -1 else mo,
+                                                allTime = state.isAllTimeMode,
+                                                categoryId = cat.id,
+                                                title = "${cat.icon} ${cat.name}"
+                                            ))
+                                        },
                                         modifier = Modifier.padding(horizontal = 20.dp)
                                     )
                                 }
@@ -375,6 +443,8 @@ private fun BalanceCard(
     monthLabel: String,
     onPreviousMonth: (() -> Unit)?,
     onNextMonth: (() -> Unit)?,
+    onIncomeClick: (() -> Unit)? = null,
+    onExpensesClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     Box(
@@ -440,21 +510,20 @@ private fun BalanceCard(
             Spacer(modifier = Modifier.height(16.dp))
 
             Row(modifier = Modifier.fillMaxWidth()) {
-                // Income
-                Column(modifier = Modifier.weight(1f)) {
+                // Income — tap to drill down to underlying transactions
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .let { if (onIncomeClick != null) it.clickable(onClick = onIncomeClick) else it }
+                ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier
-                                .size(8.dp)
-                                .clip(CircleShape)
-                                .background(IncomeGreen)
-                        )
+                        Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(IncomeGreen))
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = "Income",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = Color.White.copy(alpha = 0.75f)
-                        )
+                        Text("Income", style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = 0.75f))
+                        if (onIncomeClick != null) {
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Icon(Icons.Default.ChevronRight, contentDescription = null, tint = Color.White.copy(alpha = 0.6f), modifier = Modifier.size(14.dp))
+                        }
                     }
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
@@ -465,20 +534,19 @@ private fun BalanceCard(
                     )
                 }
                 // Expenses
-                Column(modifier = Modifier.weight(1f)) {
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .let { if (onExpensesClick != null) it.clickable(onClick = onExpensesClick) else it }
+                ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier
-                                .size(8.dp)
-                                .clip(CircleShape)
-                                .background(ExpenseRed)
-                        )
+                        Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(ExpenseRed))
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = "Expenses",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = Color.White.copy(alpha = 0.75f)
-                        )
+                        Text("Expenses", style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = 0.75f))
+                        if (onExpensesClick != null) {
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Icon(Icons.Default.ChevronRight, contentDescription = null, tint = Color.White.copy(alpha = 0.6f), modifier = Modifier.size(14.dp))
+                        }
                     }
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
@@ -602,6 +670,7 @@ private fun StyledTransactionItem(
 @Composable
 private fun ExpectedPaymentsCard(
     expected: List<com.budgetapp.domain.usecase.transaction.TransactionAnalytics.RecurringPattern>,
+    onRowClick: ((com.budgetapp.domain.usecase.transaction.TransactionAnalytics.RecurringPattern) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     Surface(
@@ -619,7 +688,10 @@ private fun ExpectedPaymentsCard(
             Spacer(Modifier.height(8.dp))
             expected.take(8).forEach { p ->
                 Row(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .let { if (onRowClick != null) it.clickable { onRowClick(p) } else it }
+                        .padding(vertical = 6.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -637,6 +709,7 @@ private fun ExpectedPaymentsCard(
                         fontWeight = FontWeight.SemiBold,
                         color = if (p.type == com.budgetapp.data.local.entity.TransactionType.INCOME) IncomeGreen else ExpenseRed
                     )
+                    if (onRowClick != null) Icon(Icons.Default.ChevronRight, contentDescription = null, modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }
@@ -647,6 +720,7 @@ private fun ExpectedPaymentsCard(
 private fun RecurringPatternsCard(
     income: List<com.budgetapp.domain.usecase.transaction.TransactionAnalytics.RecurringPattern>,
     expenses: List<com.budgetapp.domain.usecase.transaction.TransactionAnalytics.RecurringPattern>,
+    onRowClick: ((com.budgetapp.domain.usecase.transaction.TransactionAnalytics.RecurringPattern) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     Surface(
@@ -664,12 +738,12 @@ private fun RecurringPatternsCard(
             if (income.isNotEmpty()) {
                 Spacer(Modifier.height(8.dp))
                 Text("Income", style = MaterialTheme.typography.labelMedium, color = IncomeGreen)
-                income.take(5).forEach { p -> RecurringRow(p, IncomeGreen) }
+                income.take(5).forEach { p -> RecurringRow(p, IncomeGreen, onRowClick) }
             }
             if (expenses.isNotEmpty()) {
                 Spacer(Modifier.height(8.dp))
                 Text("Subscriptions & Bills", style = MaterialTheme.typography.labelMedium, color = ExpenseRed)
-                expenses.take(8).forEach { p -> RecurringRow(p, ExpenseRed) }
+                expenses.take(8).forEach { p -> RecurringRow(p, ExpenseRed, onRowClick) }
             }
         }
     }
@@ -678,10 +752,14 @@ private fun RecurringPatternsCard(
 @Composable
 private fun RecurringRow(
     p: com.budgetapp.domain.usecase.transaction.TransactionAnalytics.RecurringPattern,
-    accent: Color
+    accent: Color,
+    onClick: ((com.budgetapp.domain.usecase.transaction.TransactionAnalytics.RecurringPattern) -> Unit)? = null
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .let { if (onClick != null) it.clickable { onClick(p) } else it }
+            .padding(vertical = 6.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -699,6 +777,7 @@ private fun RecurringRow(
             fontWeight = FontWeight.SemiBold,
             color = accent
         )
+        if (onClick != null) Icon(Icons.Default.ChevronRight, contentDescription = null, modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -708,6 +787,7 @@ private fun CategoryBreakdownCard(
     breakdown: Map<com.budgetapp.domain.model.Category, Double>,
     total: Double,
     accent: Color,
+    onRowClick: ((com.budgetapp.domain.model.Category) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val sorted = breakdown.entries.sortedByDescending { it.value }.take(8)
@@ -719,10 +799,20 @@ private fun CategoryBreakdownCard(
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            Text(
+                "Tap a category to see its transactions",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
             Spacer(Modifier.height(12.dp))
             sorted.forEach { (category, amount) ->
                 val pct = if (total > 0) (amount / total).toFloat() else 0f
-                Column(modifier = Modifier.padding(vertical = 4.dp)) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .let { if (onRowClick != null) it.clickable { onRowClick(category) } else it }
+                        .padding(vertical = 6.dp)
+                ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -731,17 +821,19 @@ private fun CategoryBreakdownCard(
                         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
                             Text(text = category.icon, fontSize = 16.sp)
                             Spacer(Modifier.width(6.dp))
-                            Text(
-                                category.name,
-                                style = MaterialTheme.typography.bodyMedium,
-                                maxLines = 1
-                            )
+                            Text(category.name, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
                         }
-                        Text(
-                            "${amount.toCurrency()} · ${(pct * 100).toInt()}%",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "${amount.toCurrency()} · ${(pct * 100).toInt()}%",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            if (onRowClick != null) {
+                                Spacer(Modifier.width(4.dp))
+                                Icon(Icons.Default.ChevronRight, contentDescription = null, modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
                     }
                     Spacer(Modifier.height(4.dp))
                     LinearProgressIndicator(
@@ -786,7 +878,13 @@ private fun ScopeToggle(isAllTime: Boolean, onToggle: () -> Unit, modifier: Modi
 }
 
 @Composable
-private fun AllTimeTotalsCard(income: Double, expense: Double, modifier: Modifier = Modifier) {
+private fun AllTimeTotalsCard(
+    income: Double,
+    expense: Double,
+    onIncomeClick: (() -> Unit)? = null,
+    onExpenseClick: (() -> Unit)? = null,
+    modifier: Modifier = Modifier
+) {
     Surface(
         modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
@@ -794,27 +892,29 @@ private fun AllTimeTotalsCard(income: Double, expense: Double, modifier: Modifie
         tonalElevation = 1.dp
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            Text(
-                "All-Time Totals",
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold
-            )
+            Text("All-Time Totals", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.height(8.dp))
             Row(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.weight(1f)) {
+                Column(
+                    modifier = Modifier.weight(1f).let { if (onIncomeClick != null) it.clickable(onClick = onIncomeClick) else it }
+                ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(IncomeGreen))
                         Spacer(Modifier.width(6.dp))
                         Text("Income", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        if (onIncomeClick != null) Icon(Icons.Default.ChevronRight, contentDescription = null, modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Spacer(Modifier.height(2.dp))
                     Text("+${income.toCurrency()}", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold, color = IncomeGreen)
                 }
-                Column(modifier = Modifier.weight(1f)) {
+                Column(
+                    modifier = Modifier.weight(1f).let { if (onExpenseClick != null) it.clickable(onClick = onExpenseClick) else it }
+                ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(ExpenseRed))
                         Spacer(Modifier.width(6.dp))
                         Text("Expenses", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        if (onExpenseClick != null) Icon(Icons.Default.ChevronRight, contentDescription = null, modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Spacer(Modifier.height(2.dp))
                     Text("-${expense.toCurrency()}", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold, color = ExpenseRed)
@@ -923,6 +1023,24 @@ private fun NoIncomeHintBanner(onImport: () -> Unit, modifier: Modifier = Modifi
 }
 
 private val WarningOrange = Color(0xFFFF9800)
+
+/**
+ * Builds the nav route for the drill-down screen. URI-encodes the title since it may
+ * contain spaces or non-ASCII characters (Hebrew descriptions, currency symbols, etc.).
+ */
+private fun drillRoute(
+    type: String = "ALL",
+    year: Int = -1,
+    month: Int = -1,
+    allTime: Boolean = false,
+    categoryId: Long = -1L,
+    descPattern: String = "",
+    title: String = "Transactions"
+): String {
+    val safeTitle = android.net.Uri.encode(title)
+    val safeDesc = android.net.Uri.encode(descPattern)
+    return "drilldown?type=$type&year=$year&month=$month&allTime=$allTime&categoryId=$categoryId&descPattern=$safeDesc&title=$safeTitle"
+}
 
 fun categoryColor(categoryName: String): Color {
     val name = categoryName.lowercase()
