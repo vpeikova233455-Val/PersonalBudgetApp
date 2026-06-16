@@ -5,6 +5,7 @@ import com.budgetapp.data.local.entity.TransactionType
 import com.budgetapp.domain.model.DashboardData
 import com.budgetapp.domain.repository.TransactionRepository
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import java.util.Calendar
 import javax.inject.Inject
@@ -35,8 +36,11 @@ class GetDashboardDataUseCase @Inject constructor(
 
         AppLogger.d(TAG, "Querying dashboard data for year=$year month=$month allTime=$allTime [$monthStart..$monthEnd)")
 
+        // Recurring detection needs the full transaction history, not just the selected
+        // month — a "monthly" pattern by definition appears across multiple months.
         return transactionRepository.getTransactionsByDateRange(userId, monthStart, monthEnd)
-            .map { transactions ->
+            .combine(transactionRepository.getAllTransactions(userId)) { monthTxs, allTxs -> monthTxs to allTxs }
+            .map { (transactions, allTxs) ->
                 val incomeList   = transactions.filter { it.type == TransactionType.INCOME }
                 val expenseList  = transactions.filter { it.type == TransactionType.EXPENSE }
                 val totalIncome  = incomeList.sumOf  { it.amount }
@@ -56,6 +60,16 @@ class GetDashboardDataUseCase @Inject constructor(
                         transactions.joinToString(",") { "${it.type}:${it.amount}" }.take(500))
                 }
 
+                // Recurring detection over full history; surface only patterns with ≥2
+                // occurrences so we don't show one-off transactions as "recurring".
+                val patterns = TransactionAnalytics.detectRecurring(allTxs)
+                val recurringIncome = patterns.filter { it.type == TransactionType.INCOME }
+                val recurringExpenses = patterns.filter { it.type == TransactionType.EXPENSE }
+                // Expected this month: patterns whose nextExpectedDate falls within the
+                // currently-selected month window. Skip in all-time mode.
+                val expectedThisMonth = if (allTime) emptyList()
+                    else patterns.filter { it.nextExpectedDate in monthStart until monthEnd }
+
                 DashboardData(
                     totalIncome = totalIncome,
                     totalExpenses = totalExpenses,
@@ -63,7 +77,10 @@ class GetDashboardDataUseCase @Inject constructor(
                     recentTransactions = transactions,
                     categoryBreakdown = categoryBreakdown,
                     incomeBreakdown = incomeBreakdown,
-                    transactionCount = transactions.size
+                    transactionCount = transactions.size,
+                    recurringIncome = recurringIncome,
+                    recurringExpenses = recurringExpenses,
+                    expectedThisMonth = expectedThisMonth
                 )
             }
     }

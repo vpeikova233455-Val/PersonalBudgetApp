@@ -3,6 +3,7 @@ package com.budgetapp.presentation.imports
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -169,6 +170,40 @@ private fun PendingTransactionCard(
                         MaterialTheme.colorScheme.primary
                     else MaterialTheme.colorScheme.error
                 )
+            }
+
+            // Duplicate-detection warning (when a likely match exists in the
+            // already-approved transactions table).
+            pending.duplicateOf?.let { dupDesc ->
+                Spacer(Modifier.height(8.dp))
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.errorContainer
+                ) {
+                    Column(modifier = Modifier.padding(10.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Default.Warning,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                "Possible duplicate of \"$dupDesc\"",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                        if (pending.duplicateReasons.isNotEmpty()) {
+                            Text(
+                                pending.duplicateReasons.joinToString(" · "),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onErrorContainer
+                            )
+                        }
+                    }
+                }
             }
 
             Spacer(Modifier.height(12.dp))

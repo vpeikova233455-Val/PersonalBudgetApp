@@ -243,6 +243,30 @@ fun DashboardScreen(
                                 }
                             }
 
+                            // Expected this month — recurring patterns due in the current view.
+                            if (!state.isAllTimeMode && data.expectedThisMonth.isNotEmpty()) {
+                                item {
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    ExpectedPaymentsCard(
+                                        expected = data.expectedThisMonth,
+                                        modifier = Modifier.padding(horizontal = 20.dp)
+                                    )
+                                }
+                            }
+
+                            // Recurring income & expenses (subscriptions, salary, mortgage, …)
+                            val recurring = data.recurringIncome + data.recurringExpenses
+                            if (recurring.isNotEmpty()) {
+                                item {
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    RecurringPatternsCard(
+                                        income = data.recurringIncome,
+                                        expenses = data.recurringExpenses,
+                                        modifier = Modifier.padding(horizontal = 20.dp)
+                                    )
+                                }
+                            }
+
                             // Category breakdown — top spending categories with bars + percentage.
                             if (data.totalExpenses > 0 && data.categoryBreakdown.isNotEmpty()) {
                                 item {
@@ -572,6 +596,109 @@ private fun StyledTransactionItem(
                 color = if (transaction.type == TransactionType.INCOME) IncomeGreen else ExpenseRed
             )
         }
+    }
+}
+
+@Composable
+private fun ExpectedPaymentsCard(
+    expected: List<com.budgetapp.domain.usecase.transaction.TransactionAnalytics.RecurringPattern>,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 1.dp
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Notifications, contentDescription = null, tint = BrandBlue)
+                Spacer(Modifier.width(8.dp))
+                Text("Expected This Month", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            }
+            Spacer(Modifier.height(8.dp))
+            expected.take(8).forEach { p ->
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(p.sampleDescription, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
+                        Text(
+                            "${p.cadence.displayName} · due ${p.nextExpectedDate.toDateString("MMM d")}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Text(
+                        text = (if (p.type == com.budgetapp.data.local.entity.TransactionType.INCOME) "+" else "-") + p.avgAmount.toCurrency(),
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (p.type == com.budgetapp.data.local.entity.TransactionType.INCOME) IncomeGreen else ExpenseRed
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RecurringPatternsCard(
+    income: List<com.budgetapp.domain.usecase.transaction.TransactionAnalytics.RecurringPattern>,
+    expenses: List<com.budgetapp.domain.usecase.transaction.TransactionAnalytics.RecurringPattern>,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 1.dp
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Notifications, contentDescription = null, tint = BrandBlue)
+                Spacer(Modifier.width(8.dp))
+                Text("Recurring Transactions", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            }
+            if (income.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                Text("Income", style = MaterialTheme.typography.labelMedium, color = IncomeGreen)
+                income.take(5).forEach { p -> RecurringRow(p, IncomeGreen) }
+            }
+            if (expenses.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                Text("Subscriptions & Bills", style = MaterialTheme.typography.labelMedium, color = ExpenseRed)
+                expenses.take(8).forEach { p -> RecurringRow(p, ExpenseRed) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RecurringRow(
+    p: com.budgetapp.domain.usecase.transaction.TransactionAnalytics.RecurringPattern,
+    accent: Color
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(p.sampleDescription, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
+            Text(
+                "${p.cadence.displayName} · seen ${p.occurrences}×",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Text(
+            p.avgAmount.toCurrency(),
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = accent
+        )
     }
 }
 

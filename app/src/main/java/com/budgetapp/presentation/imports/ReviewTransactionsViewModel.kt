@@ -8,9 +8,12 @@ import com.budgetapp.data.local.database.dao.TransactionDao
 import com.budgetapp.data.local.entity.CategoryEntity
 import com.budgetapp.data.local.entity.SyncStatus
 import com.budgetapp.data.local.entity.TransactionEntity
+import com.budgetapp.data.mapper.toDomain
 import com.budgetapp.domain.repository.AuthRepository
 import com.budgetapp.core.util.AppLogger
 import com.budgetapp.domain.usecase.ai.LearnFromUserUseCase
+import com.budgetapp.domain.usecase.transaction.TransactionAnalytics
+import kotlinx.coroutines.flow.first
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -39,10 +42,36 @@ class ReviewTransactionsViewModel @Inject constructor(
         loadCategories()
     }
 
+    private suspend fun computeDuplicateCandidates(
+        pending: List<com.budgetapp.data.local.entity.PendingTransactionEntity>
+    ): Map<Long, TransactionAnalytics.DuplicateCandidate> {
+        if (pending.isEmpty()) return emptyMap()
+        val existing = try {
+            transactionDao.getAllTransactions(userId).first().map { entity ->
+                val cat = categoryDao.getCategoryById(entity.categoryId)?.toDomain()
+                    ?: com.budgetapp.domain.model.Category(
+                        id = entity.categoryId, name = "Other", icon = "📋", color = "#607D8B"
+                    )
+                entity.toDomain(cat)
+            }
+        } catch (e: Exception) {
+            AppLogger.e("ReviewTransactions", "Failed to load existing transactions for dup check", e)
+            return emptyMap()
+        }
+        val projections = pending.map { p ->
+            TransactionAnalytics.PendingForDup(
+                id = p.id, description = p.description, amount = p.amount, date = p.date, type = p.type
+            )
+        }
+        return TransactionAnalytics.detectDuplicates(projections, existing)
+            .associateBy { it.pendingId }
+    }
+
     private fun loadPendingTransactions() {
         viewModelScope.launch {
             pendingTransactionDao.getAllPending(userId)
                 .collect { pending ->
+                    val dupMap = computeDuplicateCandidates(pending)
                     val models = pending.map { entity ->
                         // Stage 6 — type read directly from DB; no history lookup modifies it
                         AppLogger.d("ReviewTransactions", "[Stage6-DBRead] desc='${entity.description}' | entityType=${entity.type} | amount=${entity.amount}")
@@ -69,6 +98,7 @@ class ReviewTransactionsViewModel @Inject constructor(
                         // Stage 8 — final UI model; type comes ONLY from entity.type read above
                         val uiType = entity.type?.name ?: "EXPENSE"
                         AppLogger.d("ReviewTransactions", "[Stage8-UIModel] desc='${entity.description}' | uiType=$uiType | entityType=${entity.type}")
+                        val dup = dupMap[entity.id]
                         PendingTransactionUiModel(
                             id = entity.id,
                             description = entity.description ?: "Unknown",
@@ -84,7 +114,9 @@ class ReviewTransactionsViewModel @Inject constructor(
                             sourceType = entity.sourceType.name,
                             aiQuestions = entity.aiQuestions?.let { parseQuestions(it) },
                             learningState = learningState,
-                            wantsAutomatic = false
+                            wantsAutomatic = false,
+                            duplicateOf = dup?.existingDescription,
+                            duplicateReasons = dup?.reasons ?: emptyList()
                         )
                     }
                     val wasLoading = _uiState.value.isLoading
@@ -264,7 +296,9 @@ data class PendingTransactionUiModel(
     val aiQuestions: List<String>?,
     val learningState: LearningState,
     val wantsAutomatic: Boolean = false,
-    val notes: String = ""
+    val notes: String = "",
+    val duplicateOf: String? = null,
+    val duplicateReasons: List<String> = emptyList()
 )
 
 data class CategoryUiModel(
