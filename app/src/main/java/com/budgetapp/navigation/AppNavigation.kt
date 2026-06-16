@@ -29,6 +29,7 @@ import com.budgetapp.presentation.drilldown.TransactionDrillDownScreen
 import com.budgetapp.presentation.imports.ImportOptionsScreen
 import com.budgetapp.presentation.imports.OcrImportViewModel
 import com.budgetapp.presentation.imports.ReviewTransactionsScreen
+import com.budgetapp.presentation.recurring.RecurringScreen
 import com.budgetapp.presentation.savings.SavingsScreen
 import com.budgetapp.presentation.history.HistoryScreen
 import com.budgetapp.presentation.settings.SettingsScreen
@@ -90,7 +91,22 @@ fun AppNavigation() {
                         onNavigateToImport = { navController.navigate("import_options") },
                         onNavigateToReview = { navController.navigate("review_transactions") },
                         onTransactionClick = { navController.navigate("edit_transaction/$it") },
-                        onNavigateToDrillDown = { route -> navController.navigate(route) }
+                        onNavigateToDrillDown = { route -> navController.navigate(route) },
+                        onNavigateToRecurring = { navController.navigate("recurring") }
+                    )
+                }
+
+                composable("recurring") {
+                    RecurringScreen(
+                        onNavigateBack = { navController.popBackStack() },
+                        onPatternClick = { p ->
+                            val type = if (p.type == com.budgetapp.data.local.entity.TransactionType.INCOME) "INCOME" else "EXPENSE"
+                            val title = android.net.Uri.encode("Recurring · ${p.sampleDescription}")
+                            val desc = android.net.Uri.encode(p.sampleDescription)
+                            navController.navigate(
+                                "drilldown?type=$type&year=-1&month=-1&allTime=true&categoryId=-1&descPattern=$desc&title=$title"
+                            )
+                        }
                     )
                 }
 

@@ -54,6 +54,7 @@ fun DashboardScreen(
     onNavigateToReview: () -> Unit,
     onTransactionClick: (String) -> Unit,
     onNavigateToDrillDown: (route: String) -> Unit,
+    onNavigateToRecurring: () -> Unit,
     viewModel: DashboardViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
@@ -109,6 +110,9 @@ fun DashboardScreen(
                     )
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = onNavigateToRecurring) {
+                        Text("Recurring", style = MaterialTheme.typography.labelMedium)
+                    }
                     IconButton(onClick = onNavigateToImport) {
                         Icon(
                             Icons.Default.FileUpload,
