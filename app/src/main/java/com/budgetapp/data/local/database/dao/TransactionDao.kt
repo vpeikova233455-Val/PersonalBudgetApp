@@ -30,6 +30,9 @@ interface TransactionDao {
     @Query("SELECT SUM(amount) FROM transactions WHERE userId = :userId AND type = :type AND date >= :startDate AND date < :endDate")
     fun getTotalByType(userId: String, type: TransactionType, startDate: Long, endDate: Long): Flow<Double?>
 
+    @Query("SELECT MAX(date) FROM transactions WHERE userId = :userId")
+    suspend fun getLatestTransactionDate(userId: String): Long?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertTransaction(transaction: TransactionEntity)
 

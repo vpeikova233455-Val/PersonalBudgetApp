@@ -1,5 +1,6 @@
 package com.budgetapp.domain.usecase.transaction
 
+import com.budgetapp.core.util.AppLogger
 import com.budgetapp.data.local.entity.TransactionType
 import com.budgetapp.domain.model.DashboardData
 import com.budgetapp.domain.repository.TransactionRepository
@@ -27,18 +28,25 @@ class GetDashboardDataUseCase @Inject constructor(
         // Single-flow approach: all three numbers (income, expenses, balance) are derived
         // from the same list emission so they are always in sync with each other and with
         // the transaction list shown on screen.
+        AppLogger.d(TAG, "Querying dashboard data for year=$year month=$month [${monthStart}..${monthEnd})")
+
         return transactionRepository.getTransactionsByDateRange(userId, monthStart, monthEnd)
             .map { transactions ->
-                val totalIncome = transactions
-                    .filter { it.type == TransactionType.INCOME }
-                    .sumOf { it.amount }
-                val totalExpenses = transactions
-                    .filter { it.type == TransactionType.EXPENSE }
-                    .sumOf { it.amount }
-                val categoryBreakdown = transactions
-                    .filter { it.type == TransactionType.EXPENSE }
+                val incomeList   = transactions.filter { it.type == TransactionType.INCOME }
+                val expenseList  = transactions.filter { it.type == TransactionType.EXPENSE }
+                val totalIncome  = incomeList.sumOf  { it.amount }
+                val totalExpenses = expenseList.sumOf { it.amount }
+                val categoryBreakdown = expenseList
                     .groupBy { it.category }
                     .mapValues { (_, txns) -> txns.sumOf { it.amount } }
+
+                AppLogger.d(TAG, "Dashboard $year/$month: " +
+                    "total=${transactions.size} income=${incomeList.size} ($totalIncome) " +
+                    "expense=${expenseList.size} ($totalExpenses)")
+                if (transactions.isNotEmpty() && incomeList.isEmpty()) {
+                    AppLogger.w(TAG, "Month $year/$month has ${transactions.size} transactions but ZERO income — types: " +
+                        transactions.joinToString(",") { "${it.type}:${it.amount}" }.take(500))
+                }
 
                 DashboardData(
                     totalIncome = totalIncome,
@@ -49,4 +57,6 @@ class GetDashboardDataUseCase @Inject constructor(
                 )
             }
     }
+
+    companion object { private const val TAG = "DashboardData" }
 }

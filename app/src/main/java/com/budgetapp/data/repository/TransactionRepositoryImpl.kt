@@ -72,6 +72,9 @@ class TransactionRepositoryImpl @Inject constructor(
     override fun getTotalByType(userId: String, type: TransactionType, startDate: Long, endDate: Long): Flow<Double> =
         transactionDao.getTotalByType(userId, type, startDate, endDate).map { it ?: 0.0 }
 
+    override suspend fun getLatestTransactionDate(userId: String): Long? =
+        transactionDao.getLatestTransactionDate(userId)
+
     override suspend fun insertTransaction(transaction: Transaction) {
         val entity = transaction.toEntity(deviceId)
         transactionDao.insertTransaction(entity)

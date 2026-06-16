@@ -191,6 +191,12 @@ class ReviewTransactionsViewModel @Inject constructor(
             )
 
             transactionDao.insertTransaction(transaction)
+            AppLogger.d("ReviewTransactions", "[Stage9-Approved] id=${transaction.id} " +
+                "desc='${transaction.description}' type=${transaction.type} amount=${transaction.amount} " +
+                "date=${transaction.date} categoryId=${transaction.categoryId} (pending.type was ${pending.type})")
+            if (pending.type != transaction.type) {
+                AppLogger.e("ReviewTransactions", "[Stage9-TypeChanged] pending.type=${pending.type} → saved=${transaction.type} — INCOME/EXPENSE may have been lost!")
+            }
 
             learnFromUserUseCase(
                 userId = userId,

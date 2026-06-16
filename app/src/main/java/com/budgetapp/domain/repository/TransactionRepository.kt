@@ -11,6 +11,7 @@ interface TransactionRepository {
     fun getTransactionsByType(userId: String, type: TransactionType): Flow<List<Transaction>>
     suspend fun getTransactionById(transactionId: String): Transaction?
     fun getTotalByType(userId: String, type: TransactionType, startDate: Long, endDate: Long): Flow<Double>
+    suspend fun getLatestTransactionDate(userId: String): Long?
     suspend fun insertTransaction(transaction: Transaction)
     suspend fun updateTransaction(transaction: Transaction)
     suspend fun deleteTransaction(transaction: Transaction)
