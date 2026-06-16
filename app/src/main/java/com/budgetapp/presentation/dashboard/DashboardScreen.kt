@@ -51,6 +51,7 @@ fun DashboardScreen(
     onNavigateToAddTransaction: () -> Unit,
     onNavigateToSettings: () -> Unit,
     onNavigateToImport: () -> Unit,
+    onNavigateToReview: () -> Unit,
     onTransactionClick: (String) -> Unit,
     viewModel: DashboardViewModel = hiltViewModel()
 ) {
@@ -171,6 +172,32 @@ fun DashboardScreen(
                                     onNextMonth = viewModel::nextMonth,
                                     modifier = Modifier.padding(horizontal = 20.dp)
                                 )
+                            }
+
+                            // Pending review banner — visible when there are unapproved imports.
+                            // Without this, users who import a file and forget to approve it see
+                            // an empty/incomplete dashboard and assume the import failed.
+                            if (state.pendingCount > 0) {
+                                item {
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    PendingReviewBanner(
+                                        count = state.pendingCount,
+                                        onClick = onNavigateToReview,
+                                        modifier = Modifier.padding(horizontal = 20.dp)
+                                    )
+                                }
+                            }
+
+                            // "No income for this month" hint — common when the user has imported
+                            // a credit-card statement (all expenses) but not their bank statement.
+                            if (data.totalExpenses > 0 && data.totalIncome == 0.0 && state.pendingCount == 0) {
+                                item {
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    NoIncomeHintBanner(
+                                        onImport = onNavigateToImport,
+                                        modifier = Modifier.padding(horizontal = 20.dp)
+                                    )
+                                }
                             }
 
                             // Spending progress card
@@ -478,6 +505,71 @@ private fun StyledTransactionItem(
                 fontWeight = FontWeight.SemiBold,
                 color = if (transaction.type == TransactionType.INCOME) IncomeGreen else ExpenseRed
             )
+        }
+    }
+}
+
+@Composable
+private fun PendingReviewBanner(count: Int, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Surface(
+        modifier = modifier.fillMaxWidth().clickable(onClick = onClick),
+        shape = RoundedCornerShape(16.dp),
+        color = WarningOrange.copy(alpha = 0.12f),
+        tonalElevation = 1.dp
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(Icons.Default.Notifications, contentDescription = null, tint = WarningOrange)
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "$count pending transaction${if (count == 1) "" else "s"} to review",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    "Approve them to include income and expenses in your totals",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Icon(Icons.Default.ChevronRight, contentDescription = null, tint = WarningOrange)
+        }
+    }
+}
+
+@Composable
+private fun NoIncomeHintBanner(onImport: () -> Unit, modifier: Modifier = Modifier) {
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 1.dp
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.FileUpload, contentDescription = null, tint = BrandBlue)
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "No income recorded this month",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "If you imported a credit-card statement, import your bank statement too — that's where salary and other income are.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(10.dp))
+            OutlinedButton(onClick = onImport) {
+                Icon(Icons.Default.FileUpload, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Import bank statement")
+            }
         }
     }
 }

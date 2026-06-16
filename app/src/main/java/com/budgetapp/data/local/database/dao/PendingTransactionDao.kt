@@ -10,6 +10,9 @@ interface PendingTransactionDao {
     @Query("SELECT * FROM pending_transactions WHERE userId = :userId ORDER BY createdTimestamp DESC")
     fun getAllPending(userId: String): Flow<List<PendingTransactionEntity>>
 
+    @Query("SELECT COUNT(*) FROM pending_transactions WHERE userId = :userId")
+    fun getPendingCount(userId: String): Flow<Int>
+
     @Query("SELECT * FROM pending_transactions WHERE id = :pendingId")
     suspend fun getPendingById(pendingId: Long): PendingTransactionEntity?
 

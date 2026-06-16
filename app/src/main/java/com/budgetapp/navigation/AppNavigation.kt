@@ -87,6 +87,7 @@ fun AppNavigation() {
                         onNavigateToAddTransaction = { navController.navigate("add_transaction") },
                         onNavigateToSettings = { navController.navigate("settings") },
                         onNavigateToImport = { navController.navigate("import_options") },
+                        onNavigateToReview = { navController.navigate("review_transactions") },
                         onTransactionClick = { navController.navigate("edit_transaction/$it") }
                     )
                 }

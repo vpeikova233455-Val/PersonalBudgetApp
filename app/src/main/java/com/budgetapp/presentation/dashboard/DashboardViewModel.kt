@@ -3,6 +3,7 @@ package com.budgetapp.presentation.dashboard
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.budgetapp.core.util.AppLogger
+import com.budgetapp.data.local.database.dao.PendingTransactionDao
 import com.budgetapp.domain.model.DashboardData
 import com.budgetapp.domain.repository.AuthRepository
 import com.budgetapp.domain.repository.SyncRepository
@@ -15,8 +16,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
@@ -31,7 +32,11 @@ private const val TAG = "DashboardViewModel"
 
 sealed class DashboardUiState {
     data object Loading : DashboardUiState()
-    data class Success(val data: DashboardData, val isRefreshing: Boolean = false) : DashboardUiState()
+    data class Success(
+        val data: DashboardData,
+        val pendingCount: Int = 0,
+        val isRefreshing: Boolean = false
+    ) : DashboardUiState()
     data class Error(val message: String) : DashboardUiState()
 }
 
@@ -40,7 +45,8 @@ class DashboardViewModel @Inject constructor(
     private val getDashboardDataUseCase: GetDashboardDataUseCase,
     private val authRepository: AuthRepository,
     private val syncRepository: SyncRepository,
-    private val transactionRepository: TransactionRepository
+    private val transactionRepository: TransactionRepository,
+    private val pendingTransactionDao: PendingTransactionDao
 ) : ViewModel() {
 
     private val userId: String = runBlocking { authRepository.getCurrentUserId() } ?: ""
@@ -94,10 +100,11 @@ class DashboardViewModel @Inject constructor(
         _selectedYearMonth
             .flatMapLatest { (year, month) ->
                 getDashboardDataUseCase(userId, year, month)
-                    .map<DashboardData, DashboardUiState> { data ->
+                    .combine(pendingTransactionDao.getPendingCount(userId)) { data, pending ->
                         val isRefreshing =
                             (_uiState.value as? DashboardUiState.Success)?.isRefreshing ?: false
-                        DashboardUiState.Success(data, isRefreshing)
+                        AppLogger.d(TAG, "Dashboard $year/$month: pending=$pending income=${data.totalIncome} expense=${data.totalExpenses}")
+                        DashboardUiState.Success(data, pendingCount = pending, isRefreshing = isRefreshing) as DashboardUiState
                     }
                     .catch { e ->
                         AppLogger.e(TAG, "Dashboard data error", e)
