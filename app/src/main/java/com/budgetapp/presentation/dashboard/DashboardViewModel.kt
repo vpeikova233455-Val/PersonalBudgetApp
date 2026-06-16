@@ -4,6 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.budgetapp.core.util.AppLogger
 import com.budgetapp.data.local.database.dao.PendingTransactionDao
+import com.budgetapp.data.local.database.dao.TransactionDao
+import com.budgetapp.data.local.entity.TransactionType
 import com.budgetapp.domain.model.DashboardData
 import com.budgetapp.domain.repository.AuthRepository
 import com.budgetapp.domain.repository.SyncRepository
@@ -35,6 +37,8 @@ sealed class DashboardUiState {
     data class Success(
         val data: DashboardData,
         val pendingCount: Int = 0,
+        val allTimeIncome: Double = 0.0,
+        val allTimeExpense: Double = 0.0,
         val isRefreshing: Boolean = false
     ) : DashboardUiState()
     data class Error(val message: String) : DashboardUiState()
@@ -46,7 +50,8 @@ class DashboardViewModel @Inject constructor(
     private val authRepository: AuthRepository,
     private val syncRepository: SyncRepository,
     private val transactionRepository: TransactionRepository,
-    private val pendingTransactionDao: PendingTransactionDao
+    private val pendingTransactionDao: PendingTransactionDao,
+    private val transactionDao: TransactionDao
 ) : ViewModel() {
 
     private val userId: String = runBlocking { authRepository.getCurrentUserId() } ?: ""
@@ -62,7 +67,36 @@ class DashboardViewModel @Inject constructor(
 
     init {
         jumpToLatestTransactionMonth()
+        dumpIncomeDiagnostics()
         observeDashboard()
+    }
+
+    /**
+     * Dumps every income transaction with its date to the log so bug reports can pinpoint
+     * exactly where income transactions live. Without this, an "income exists but doesn't
+     * show on dashboard" report is impossible to diagnose because we can't see the stored
+     * date values.
+     */
+    private fun dumpIncomeDiagnostics() {
+        if (userId.isEmpty()) return
+        viewModelScope.launch {
+            try {
+                val income = transactionDao.getAllByTypeForDebug(userId, TransactionType.INCOME)
+                val expense = transactionDao.getAllByTypeForDebug(userId, TransactionType.EXPENSE)
+                AppLogger.d(TAG, "[Diag] DB has ${income.size} income, ${expense.size} expense transactions")
+                if (income.isNotEmpty()) {
+                    val minDate = income.minOf { it.date }
+                    val maxDate = income.maxOf { it.date }
+                    AppLogger.d(TAG, "[Diag] Income date range: $minDate .. $maxDate")
+                    income.take(20).forEach { tx ->
+                        AppLogger.d(TAG, "[Diag] INCOME date=${tx.date} amount=${tx.amount} desc='${tx.description}'")
+                    }
+                    if (income.size > 20) AppLogger.d(TAG, "[Diag] (...and ${income.size - 20} more income rows)")
+                }
+            } catch (e: Exception) {
+                AppLogger.e(TAG, "Diagnostic dump failed", e)
+            }
+        }
     }
 
     /**
@@ -97,15 +131,29 @@ class DashboardViewModel @Inject constructor(
             return
         }
 
+        val incomeAllTime  = transactionDao.getAllTimeTotalByType(userId, TransactionType.INCOME).map { it ?: 0.0 }
+        val expenseAllTime = transactionDao.getAllTimeTotalByType(userId, TransactionType.EXPENSE).map { it ?: 0.0 }
+
         _selectedYearMonth
             .flatMapLatest { (year, month) ->
-                getDashboardDataUseCase(userId, year, month)
-                    .combine(pendingTransactionDao.getPendingCount(userId)) { data, pending ->
-                        val isRefreshing =
-                            (_uiState.value as? DashboardUiState.Success)?.isRefreshing ?: false
-                        AppLogger.d(TAG, "Dashboard $year/$month: pending=$pending income=${data.totalIncome} expense=${data.totalExpenses}")
-                        DashboardUiState.Success(data, pendingCount = pending, isRefreshing = isRefreshing) as DashboardUiState
+                combine(
+                    getDashboardDataUseCase(userId, year, month),
+                    pendingTransactionDao.getPendingCount(userId),
+                    incomeAllTime,
+                    expenseAllTime
+                ) { data, pending, allIncome, allExpense ->
+                    val isRefreshing =
+                        (_uiState.value as? DashboardUiState.Success)?.isRefreshing ?: false
+                    AppLogger.d(TAG, "Dashboard $year/$month: pending=$pending income=${data.totalIncome} expense=${data.totalExpenses} | allTime income=$allIncome expense=$allExpense")
+                    if (allIncome > 0 && data.totalIncome == 0.0) {
+                        AppLogger.w(TAG, "All-time income=$allIncome but this month=0 — income transactions exist with dates outside the current month range")
                     }
+                    DashboardUiState.Success(
+                        data, pendingCount = pending,
+                        allTimeIncome = allIncome, allTimeExpense = allExpense,
+                        isRefreshing = isRefreshing
+                    ) as DashboardUiState
+                }
                     .catch { e ->
                         AppLogger.e(TAG, "Dashboard data error", e)
                         emit(DashboardUiState.Error(e.message ?: "Failed to load dashboard"))

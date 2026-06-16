@@ -175,8 +175,6 @@ fun DashboardScreen(
                             }
 
                             // Pending review banner — visible when there are unapproved imports.
-                            // Without this, users who import a file and forget to approve it see
-                            // an empty/incomplete dashboard and assume the import failed.
                             if (state.pendingCount > 0) {
                                 item {
                                     Spacer(modifier = Modifier.height(12.dp))
@@ -188,9 +186,31 @@ fun DashboardScreen(
                                 }
                             }
 
-                            // "No income for this month" hint — common when the user has imported
-                            // a credit-card statement (all expenses) but not their bank statement.
-                            if (data.totalExpenses > 0 && data.totalIncome == 0.0 && state.pendingCount == 0) {
+                            // All-time totals — visible whenever there is any data at all.
+                            // Ensures income is reflected even when the selected month happens to
+                            // have none (e.g. income transactions stored in a different month).
+                            if (state.allTimeIncome > 0 || state.allTimeExpense > 0) {
+                                item {
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    AllTimeTotalsCard(
+                                        income = state.allTimeIncome,
+                                        expense = state.allTimeExpense,
+                                        modifier = Modifier.padding(horizontal = 20.dp)
+                                    )
+                                }
+                            }
+
+                            // "Income exists but not in this month" hint — show when there's
+                            // all-time income but this month has none.
+                            if (data.totalIncome == 0.0 && state.allTimeIncome > 0) {
+                                item {
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    IncomeElsewhereBanner(
+                                        modifier = Modifier.padding(horizontal = 20.dp)
+                                    )
+                                }
+                            } else if (data.totalExpenses > 0 && data.totalIncome == 0.0 && state.allTimeIncome == 0.0 && state.pendingCount == 0) {
+                                // No income anywhere — invite user to import bank statement.
                                 item {
                                     Spacer(modifier = Modifier.height(12.dp))
                                     NoIncomeHintBanner(
@@ -504,6 +524,78 @@ private fun StyledTransactionItem(
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.SemiBold,
                 color = if (transaction.type == TransactionType.INCOME) IncomeGreen else ExpenseRed
+            )
+        }
+    }
+}
+
+@Composable
+private fun AllTimeTotalsCard(income: Double, expense: Double, modifier: Modifier = Modifier) {
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 1.dp
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                "All-Time Totals",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(IncomeGreen))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Income", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Spacer(Modifier.height(2.dp))
+                    Text("+${income.toCurrency()}", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold, color = IncomeGreen)
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(ExpenseRed))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Expenses", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Spacer(Modifier.height(2.dp))
+                    Text("-${expense.toCurrency()}", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold, color = ExpenseRed)
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Net", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        (income - expense).toCurrency(),
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (income - expense >= 0) IncomeGreen else ExpenseRed
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun IncomeElsewhereBanner(modifier: Modifier = Modifier) {
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = IncomeGreen.copy(alpha = 0.1f),
+        tonalElevation = 1.dp
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(Icons.Default.Notifications, contentDescription = null, tint = IncomeGreen)
+            Spacer(Modifier.width(12.dp))
+            Text(
+                "You have income recorded — but not in this month. Use the arrows above to navigate to another month.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface
             )
         }
     }

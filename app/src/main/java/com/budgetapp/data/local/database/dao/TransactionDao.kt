@@ -33,6 +33,12 @@ interface TransactionDao {
     @Query("SELECT MAX(date) FROM transactions WHERE userId = :userId")
     suspend fun getLatestTransactionDate(userId: String): Long?
 
+    @Query("SELECT SUM(amount) FROM transactions WHERE userId = :userId AND type = :type")
+    fun getAllTimeTotalByType(userId: String, type: TransactionType): Flow<Double?>
+
+    @Query("SELECT id, date, amount, description FROM transactions WHERE userId = :userId AND type = :type ORDER BY date DESC")
+    suspend fun getAllByTypeForDebug(userId: String, type: TransactionType): List<TxDateDebug>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertTransaction(transaction: TransactionEntity)
 
@@ -60,3 +66,5 @@ interface TransactionDao {
     @Query("UPDATE transactions SET syncStatus = :status WHERE id = :transactionId")
     suspend fun updateSyncStatus(transactionId: String, status: SyncStatus)
 }
+
+data class TxDateDebug(val id: String, val date: Long, val amount: Double, val description: String)
