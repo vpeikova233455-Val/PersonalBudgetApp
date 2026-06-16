@@ -271,41 +271,32 @@ fun DashboardScreen(
                                 }
                             }
 
-                            // Expected this month — recurring patterns due in the current view.
-                            // Each row drills into the historical transactions of that pattern.
-                            if (!state.isAllTimeMode && data.expectedThisMonth.isNotEmpty()) {
+                            // Monthly comparison — current vs previous month delta.
+                            if (!state.isAllTimeMode && (state.prevMonthIncome > 0 || state.prevMonthExpense > 0 || data.totalIncome > 0 || data.totalExpenses > 0)) {
                                 item {
                                     Spacer(modifier = Modifier.height(12.dp))
-                                    ExpectedPaymentsCard(
-                                        expected = data.expectedThisMonth,
-                                        onRowClick = { p ->
-                                            onNavigateToDrillDown(drillRoute(
-                                                type = if (p.type == com.budgetapp.data.local.entity.TransactionType.INCOME) "INCOME" else "EXPENSE",
-                                                allTime = true,
-                                                descPattern = p.sampleDescription,
-                                                title = "Expected · ${p.sampleDescription}"
-                                            ))
-                                        },
+                                    MonthlyComparisonCard(
+                                        currentIncome = data.totalIncome,
+                                        prevIncome = state.prevMonthIncome,
+                                        currentExpense = data.totalExpenses,
+                                        prevExpense = state.prevMonthExpense,
                                         modifier = Modifier.padding(horizontal = 20.dp)
                                     )
                                 }
                             }
 
-                            // Recurring income & expenses (subscriptions, salary, mortgage, …)
-                            // — each row drills into the transactions matching that pattern.
-                            val recurring = data.recurringIncome + data.recurringExpenses
-                            if (recurring.isNotEmpty()) {
+                            // 6-month trend chart — tap any bar to drill into that month.
+                            if (state.monthlyTrend.size >= 2) {
                                 item {
                                     Spacer(modifier = Modifier.height(12.dp))
-                                    RecurringPatternsCard(
-                                        income = data.recurringIncome,
-                                        expenses = data.recurringExpenses,
-                                        onRowClick = { p ->
+                                    SixMonthTrendCard(
+                                        trend = state.monthlyTrend,
+                                        onBarClick = { bucket ->
                                             onNavigateToDrillDown(drillRoute(
-                                                type = if (p.type == com.budgetapp.data.local.entity.TransactionType.INCOME) "INCOME" else "EXPENSE",
-                                                allTime = true,
-                                                descPattern = p.sampleDescription,
-                                                title = "Recurring · ${p.sampleDescription}"
+                                                type = "ALL",
+                                                year = bucket.year,
+                                                month = bucket.month,
+                                                title = bucket.label
                                             ))
                                         },
                                         modifier = Modifier.padding(horizontal = 20.dp)
@@ -668,9 +659,11 @@ private fun StyledTransactionItem(
 }
 
 @Composable
-private fun ExpectedPaymentsCard(
-    expected: List<com.budgetapp.domain.usecase.transaction.TransactionAnalytics.RecurringPattern>,
-    onRowClick: ((com.budgetapp.domain.usecase.transaction.TransactionAnalytics.RecurringPattern) -> Unit)? = null,
+private fun MonthlyComparisonCard(
+    currentIncome: Double,
+    prevIncome: Double,
+    currentExpense: Double,
+    prevExpense: Double,
     modifier: Modifier = Modifier
 ) {
     Surface(
@@ -680,104 +673,140 @@ private fun ExpectedPaymentsCard(
         tonalElevation = 1.dp
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.Notifications, contentDescription = null, tint = BrandBlue)
-                Spacer(Modifier.width(8.dp))
-                Text("Expected This Month", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-            }
-            Spacer(Modifier.height(8.dp))
-            expected.take(8).forEach { p ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .let { if (onRowClick != null) it.clickable { onRowClick(p) } else it }
-                        .padding(vertical = 6.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(p.sampleDescription, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
-                        Text(
-                            "${p.cadence.displayName} · due ${p.nextExpectedDate.toDateString("MMM d")}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Text(
-                        text = (if (p.type == com.budgetapp.data.local.entity.TransactionType.INCOME) "+" else "-") + p.avgAmount.toCurrency(),
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = if (p.type == com.budgetapp.data.local.entity.TransactionType.INCOME) IncomeGreen else ExpenseRed
-                    )
-                    if (onRowClick != null) Icon(Icons.Default.ChevronRight, contentDescription = null, modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
+            Text("vs Previous Month", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(10.dp))
+            Row(modifier = Modifier.fillMaxWidth()) {
+                ComparisonCell(
+                    label = "Income",
+                    accent = IncomeGreen,
+                    current = currentIncome,
+                    previous = prevIncome,
+                    higherIsGood = true,
+                    modifier = Modifier.weight(1f)
+                )
+                Spacer(Modifier.width(12.dp))
+                ComparisonCell(
+                    label = "Expenses",
+                    accent = ExpenseRed,
+                    current = currentExpense,
+                    previous = prevExpense,
+                    higherIsGood = false,
+                    modifier = Modifier.weight(1f)
+                )
             }
         }
     }
 }
 
 @Composable
-private fun RecurringPatternsCard(
-    income: List<com.budgetapp.domain.usecase.transaction.TransactionAnalytics.RecurringPattern>,
-    expenses: List<com.budgetapp.domain.usecase.transaction.TransactionAnalytics.RecurringPattern>,
-    onRowClick: ((com.budgetapp.domain.usecase.transaction.TransactionAnalytics.RecurringPattern) -> Unit)? = null,
-    modifier: Modifier = Modifier
-) {
-    Surface(
-        modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 1.dp
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.Notifications, contentDescription = null, tint = BrandBlue)
-                Spacer(Modifier.width(8.dp))
-                Text("Recurring Transactions", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-            }
-            if (income.isNotEmpty()) {
-                Spacer(Modifier.height(8.dp))
-                Text("Income", style = MaterialTheme.typography.labelMedium, color = IncomeGreen)
-                income.take(5).forEach { p -> RecurringRow(p, IncomeGreen, onRowClick) }
-            }
-            if (expenses.isNotEmpty()) {
-                Spacer(Modifier.height(8.dp))
-                Text("Subscriptions & Bills", style = MaterialTheme.typography.labelMedium, color = ExpenseRed)
-                expenses.take(8).forEach { p -> RecurringRow(p, ExpenseRed, onRowClick) }
-            }
-        }
-    }
-}
-
-@Composable
-private fun RecurringRow(
-    p: com.budgetapp.domain.usecase.transaction.TransactionAnalytics.RecurringPattern,
+private fun ComparisonCell(
+    label: String,
     accent: Color,
-    onClick: ((com.budgetapp.domain.usecase.transaction.TransactionAnalytics.RecurringPattern) -> Unit)? = null
+    current: Double,
+    previous: Double,
+    higherIsGood: Boolean,
+    modifier: Modifier = Modifier
 ) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .let { if (onClick != null) it.clickable { onClick(p) } else it }
-            .padding(vertical = 6.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(p.sampleDescription, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
+    val delta = current - previous
+    val pct = if (previous > 0.005) ((current - previous) / previous * 100).toInt() else null
+    val deltaUp = delta > 0
+    val isGood = (deltaUp && higherIsGood) || (!deltaUp && !higherIsGood)
+    val deltaColor = if (delta == 0.0) MaterialTheme.colorScheme.onSurfaceVariant
+                     else if (isGood) IncomeGreen else ExpenseRed
+    Column(modifier = modifier) {
+        Text(label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(2.dp))
+        Text(current.toCurrency(), style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold, color = accent)
+        Spacer(Modifier.height(2.dp))
+        if (previous > 0.005 || current > 0.005) {
+            val arrow = when {
+                delta > 0.005 -> "↑"
+                delta < -0.005 -> "↓"
+                else -> "="
+            }
+            val pctLabel = pct?.let { "$arrow ${kotlin.math.abs(it)}%" } ?: arrow
             Text(
-                "${p.cadence.displayName} · seen ${p.occurrences}×",
+                "$pctLabel vs ${previous.toCurrency()}",
+                style = MaterialTheme.typography.bodySmall,
+                color = deltaColor
+            )
+        }
+    }
+}
+
+@Composable
+private fun SixMonthTrendCard(
+    trend: List<MonthlyBucket>,
+    onBarClick: (MonthlyBucket) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val maxValue = trend.maxOfOrNull { kotlin.math.max(it.income, it.expense) }?.takeIf { it > 0 } ?: 1.0
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 1.dp
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text("6-Month Trend", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            Text(
+                "Income vs expenses by month — tap a bar to drill in",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            Spacer(Modifier.height(12.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth().height(120.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Bottom
+            ) {
+                trend.forEach { bucket ->
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable { onBarClick(bucket) }
+                            .padding(horizontal = 2.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Bottom
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.Bottom,
+                            horizontalArrangement = Arrangement.spacedBy(2.dp),
+                            modifier = Modifier.height(100.dp)
+                        ) {
+                            val incomeHeight = (100 * (bucket.income / maxValue)).toInt().coerceAtLeast(if (bucket.income > 0) 2 else 0)
+                            val expenseHeight = (100 * (bucket.expense / maxValue)).toInt().coerceAtLeast(if (bucket.expense > 0) 2 else 0)
+                            Box(
+                                modifier = Modifier
+                                    .width(10.dp)
+                                    .height(incomeHeight.dp)
+                                    .clip(RoundedCornerShape(topStart = 3.dp, topEnd = 3.dp))
+                                    .background(IncomeGreen)
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .width(10.dp)
+                                    .height(expenseHeight.dp)
+                                    .clip(RoundedCornerShape(topStart = 3.dp, topEnd = 3.dp))
+                                    .background(ExpenseRed)
+                            )
+                        }
+                        Spacer(Modifier.height(4.dp))
+                        Text(bucket.label, style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(IncomeGreen))
+                Spacer(Modifier.width(4.dp))
+                Text("Income", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.width(12.dp))
+                Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(ExpenseRed))
+                Spacer(Modifier.width(4.dp))
+                Text("Expenses", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
-        Text(
-            p.avgAmount.toCurrency(),
-            style = MaterialTheme.typography.bodyMedium,
-            fontWeight = FontWeight.SemiBold,
-            color = accent
-        )
-        if (onClick != null) Icon(Icons.Default.ChevronRight, contentDescription = null, modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 

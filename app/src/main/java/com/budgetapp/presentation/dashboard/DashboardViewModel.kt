@@ -32,6 +32,8 @@ import javax.inject.Inject
 
 private const val TAG = "DashboardViewModel"
 
+data class MonthlyBucket(val year: Int, val month: Int, val label: String, val income: Double, val expense: Double)
+
 sealed class DashboardUiState {
     data object Loading : DashboardUiState()
     data class Success(
@@ -39,6 +41,9 @@ sealed class DashboardUiState {
         val pendingCount: Int = 0,
         val allTimeIncome: Double = 0.0,
         val allTimeExpense: Double = 0.0,
+        val prevMonthIncome: Double = 0.0,
+        val prevMonthExpense: Double = 0.0,
+        val monthlyTrend: List<MonthlyBucket> = emptyList(),
         val isAllTimeMode: Boolean = false,
         val isRefreshing: Boolean = false
     ) : DashboardUiState()
@@ -173,26 +178,40 @@ class DashboardViewModel @Inject constructor(
 
         val incomeAllTime  = transactionDao.getAllTimeTotalByType(userId, TransactionType.INCOME).map { it ?: 0.0 }
         val expenseAllTime = transactionDao.getAllTimeTotalByType(userId, TransactionType.EXPENSE).map { it ?: 0.0 }
+        val allTxs = transactionRepository.getAllTransactions(userId)
 
-        // Combine the month selection with the all-time toggle so changes to either restart
-        // the dashboard query with the right date range.
         _selectedYearMonth.combine(_isAllTimeMode) { ym, allTime -> Triple(ym.first, ym.second, allTime) }
             .flatMapLatest { (year, month, allTime) ->
                 combine(
                     getDashboardDataUseCase(userId, year, month, allTime),
                     pendingTransactionDao.getPendingCount(userId),
                     incomeAllTime,
-                    expenseAllTime
-                ) { data, pending, allIncome, allExpense ->
-                    val isRefreshing =
-                        (_uiState.value as? DashboardUiState.Success)?.isRefreshing ?: false
-                    AppLogger.d(TAG, "Dashboard $year/$month allTime=$allTime: pending=$pending income=${data.totalIncome} expense=${data.totalExpenses} | allTime income=$allIncome expense=$allExpense")
+                    expenseAllTime,
+                    allTxs
+                ) { values: Array<Any> ->
+                    @Suppress("UNCHECKED_CAST")
+                    val data    = values[0] as com.budgetapp.domain.model.DashboardData
+                    val pending = values[1] as Int
+                    val allIncome = values[2] as Double
+                    val allExpense = values[3] as Double
+                    val txs = values[4] as List<com.budgetapp.domain.model.Transaction>
+
+                    val (prevIncome, prevExpense) = previousMonthTotals(txs, year, month)
+                    val trend = if (allTime) emptyList() else lastNMonthsTrend(txs, year, month, 6)
+
+                    val isRefreshing = (_uiState.value as? DashboardUiState.Success)?.isRefreshing ?: false
+                    AppLogger.d(TAG, "Dashboard $year/$month allTime=$allTime: pending=$pending income=${data.totalIncome} expense=${data.totalExpenses} | prev=$prevIncome/$prevExpense | trendBuckets=${trend.size}")
                     if (!allTime && allIncome > 0 && data.totalIncome == 0.0) {
                         AppLogger.w(TAG, "All-time income=$allIncome but this month=0 — income transactions exist with dates outside the current month range")
                     }
                     DashboardUiState.Success(
-                        data, pendingCount = pending,
-                        allTimeIncome = allIncome, allTimeExpense = allExpense,
+                        data,
+                        pendingCount = pending,
+                        allTimeIncome = allIncome,
+                        allTimeExpense = allExpense,
+                        prevMonthIncome = prevIncome,
+                        prevMonthExpense = prevExpense,
+                        monthlyTrend = trend,
                         isAllTimeMode = allTime,
                         isRefreshing = isRefreshing
                     ) as DashboardUiState
@@ -208,6 +227,50 @@ class DashboardViewModel @Inject constructor(
                 _uiState.value = DashboardUiState.Error(e.message ?: "Failed to load dashboard")
             }
             .launchIn(viewModelScope)
+    }
+
+    private fun previousMonthTotals(
+        all: List<com.budgetapp.domain.model.Transaction>,
+        year: Int, month: Int
+    ): Pair<Double, Double> {
+        val cal = Calendar.getInstance().apply {
+            set(Calendar.YEAR, year); set(Calendar.MONTH, month)
+            set(Calendar.DAY_OF_MONTH, 1); set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+            add(Calendar.MONTH, -1)
+        }
+        val start = cal.timeInMillis
+        cal.add(Calendar.MONTH, 1)
+        val end = cal.timeInMillis
+        val prev = all.filter { it.date in start until end }
+        val income = prev.filter { it.type == TransactionType.INCOME }.sumOf { it.amount }
+        val expense = prev.filter { it.type == TransactionType.EXPENSE }.sumOf { it.amount }
+        return income to expense
+    }
+
+    private fun lastNMonthsTrend(
+        all: List<com.budgetapp.domain.model.Transaction>,
+        year: Int, month: Int, n: Int
+    ): List<MonthlyBucket> {
+        val buckets = mutableListOf<MonthlyBucket>()
+        for (i in (n - 1) downTo 0) {
+            val cal = Calendar.getInstance().apply {
+                set(Calendar.YEAR, year); set(Calendar.MONTH, month)
+                set(Calendar.DAY_OF_MONTH, 1); set(Calendar.HOUR_OF_DAY, 0)
+                set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+                add(Calendar.MONTH, -i)
+            }
+            val y = cal.get(Calendar.YEAR); val m = cal.get(Calendar.MONTH)
+            val start = cal.timeInMillis
+            cal.add(Calendar.MONTH, 1)
+            val end = cal.timeInMillis
+            val txs = all.filter { it.date in start until end }
+            val income = txs.filter { it.type == TransactionType.INCOME }.sumOf { it.amount }
+            val expense = txs.filter { it.type == TransactionType.EXPENSE }.sumOf { it.amount }
+            val label = SimpleDateFormat("MMM", Locale.ENGLISH).format(java.util.Date(start))
+            buckets += MonthlyBucket(y, m, label, income, expense)
+        }
+        return buckets
     }
 
     fun previousMonth() {
