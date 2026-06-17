@@ -60,6 +60,18 @@ fun DashboardScreen(
     val uiState by viewModel.uiState.collectAsState()
     val pullToRefreshState = rememberPullToRefreshState()
     val selectedYearMonth by viewModel.selectedYearMonth.collectAsState()
+    var showRangePicker by remember { mutableStateOf(false) }
+
+    if (showRangePicker) {
+        DateRangePickerDialog(
+            initialRange = (uiState as? DashboardUiState.Success)?.customRange,
+            onDismiss = { showRangePicker = false },
+            onConfirm = { start, end ->
+                viewModel.setCustomRange(start, end)
+                showRangePicker = false
+            }
+        )
+    }
 
     LaunchedEffect(pullToRefreshState.isRefreshing) {
         if (pullToRefreshState.isRefreshing) viewModel.refresh()
@@ -159,53 +171,57 @@ fun DashboardScreen(
 
                     is DashboardUiState.Success -> {
                         val data = state.data
-                        val spendingRatio = if (data.totalIncome > 0)
-                            min(data.totalExpenses / data.totalIncome, 1.0).toFloat()
-                        else 0f
 
                         LazyColumn(
                             modifier = Modifier.fillMaxSize(),
                             contentPadding = PaddingValues(bottom = 16.dp)
                         ) {
-                            // Monthly / All-Time toggle — gives users a one-tap way to see
-                            // totals regardless of how transaction dates ended up stored.
-                            item {
-                                ScopeToggle(
-                                    isAllTime = state.isAllTimeMode,
-                                    onToggle = viewModel::toggleAllTimeMode,
-                                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)
-                                )
-                            }
+                            val (yr, mo) = selectedYearMonth
+                            val hasCustomRange = state.customRange != null
+                            val typeFilter = state.typeFilter
+                            val showExpenseCards = typeFilter != DashboardTypeFilter.INCOME
+                            val showIncomeCards = typeFilter != DashboardTypeFilter.EXPENSE
 
-                            // Balance card — income / expense numbers are tappable and open
-                            // the drill-down screen scoped to the current month (or all-time).
+                            // (1) Period selector — month nav arrows + month label live inside the
+                            // BalanceCard. In custom-range mode the arrows are disabled and the
+                            // label switches to the range string.
                             item {
-                                val (yr, mo) = selectedYearMonth
                                 BalanceCard(
                                     balance = data.balance,
                                     income = data.totalIncome,
                                     expenses = data.totalExpenses,
                                     monthLabel = viewModel.selectedMonthLabel(),
-                                    onPreviousMonth = if (state.isAllTimeMode) null else viewModel::previousMonth,
-                                    onNextMonth = if (state.isAllTimeMode) null else viewModel::nextMonth,
+                                    onPreviousMonth = if (hasCustomRange) null else viewModel::previousMonth,
+                                    onNextMonth = if (hasCustomRange) null else viewModel::nextMonth,
                                     onIncomeClick = if (data.totalIncome > 0) ({
                                         onNavigateToDrillDown(drillRoute(
                                             type = "INCOME",
-                                            year = if (state.isAllTimeMode) -1 else yr,
-                                            month = if (state.isAllTimeMode) -1 else mo,
-                                            allTime = state.isAllTimeMode,
+                                            year = if (hasCustomRange) -1 else yr,
+                                            month = if (hasCustomRange) -1 else mo,
                                             title = "Income · ${viewModel.selectedMonthLabel()}"
                                         ))
                                     }) else null,
                                     onExpensesClick = if (data.totalExpenses > 0) ({
                                         onNavigateToDrillDown(drillRoute(
                                             type = "EXPENSE",
-                                            year = if (state.isAllTimeMode) -1 else yr,
-                                            month = if (state.isAllTimeMode) -1 else mo,
-                                            allTime = state.isAllTimeMode,
+                                            year = if (hasCustomRange) -1 else yr,
+                                            month = if (hasCustomRange) -1 else mo,
                                             title = "Expenses · ${viewModel.selectedMonthLabel()}"
                                         ))
                                     }) else null,
+                                    modifier = Modifier.padding(horizontal = 20.dp)
+                                )
+                            }
+
+                            // (2) Filter row — type chips + custom-range button.
+                            item {
+                                Spacer(modifier = Modifier.height(12.dp))
+                                FilterRow(
+                                    typeFilter = state.typeFilter,
+                                    onTypeChange = viewModel::setTypeFilter,
+                                    customRange = state.customRange,
+                                    onCustomRangeClick = { showRangePicker = true },
+                                    onClearCustomRange = viewModel::clearCustomRange,
                                     modifier = Modifier.padding(horizontal = 20.dp)
                                 )
                             }
@@ -222,61 +238,10 @@ fun DashboardScreen(
                                 }
                             }
 
-                            // All-time totals — visible when in monthly mode (in all-time mode the
-                            // BalanceCard above already shows all-time numbers, so this card would
-                            // be redundant). Each line drills into the all-time list for that type.
-                            if (!state.isAllTimeMode && (state.allTimeIncome > 0 || state.allTimeExpense > 0)) {
-                                item {
-                                    Spacer(modifier = Modifier.height(12.dp))
-                                    AllTimeTotalsCard(
-                                        income = state.allTimeIncome,
-                                        expense = state.allTimeExpense,
-                                        onIncomeClick = if (state.allTimeIncome > 0) ({
-                                            onNavigateToDrillDown(drillRoute("INCOME", -1, -1, true, title = "All-Time Income"))
-                                        }) else null,
-                                        onExpenseClick = if (state.allTimeExpense > 0) ({
-                                            onNavigateToDrillDown(drillRoute("EXPENSE", -1, -1, true, title = "All-Time Expenses"))
-                                        }) else null,
-                                        modifier = Modifier.padding(horizontal = 20.dp)
-                                    )
-                                }
-                            }
-
-                            // "Income exists but not in this month" hint — show when there's
-                            // all-time income but this month has none (only in monthly mode).
-                            if (!state.isAllTimeMode && data.totalIncome == 0.0 && state.allTimeIncome > 0) {
-                                item {
-                                    Spacer(modifier = Modifier.height(12.dp))
-                                    IncomeElsewhereBanner(
-                                        modifier = Modifier.padding(horizontal = 20.dp)
-                                    )
-                                }
-                            } else if (!state.isAllTimeMode && data.totalExpenses > 0 && data.totalIncome == 0.0 && state.allTimeIncome == 0.0 && state.pendingCount == 0) {
-                                // No income anywhere — invite user to import bank statement.
-                                item {
-                                    Spacer(modifier = Modifier.height(12.dp))
-                                    NoIncomeHintBanner(
-                                        onImport = onNavigateToImport,
-                                        modifier = Modifier.padding(horizontal = 20.dp)
-                                    )
-                                }
-                            }
-
-                            // Spending progress card
-                            if (data.totalIncome > 0 || data.totalExpenses > 0) {
-                                item {
-                                    Spacer(modifier = Modifier.height(16.dp))
-                                    SpendingProgressCard(
-                                        totalExpenses = data.totalExpenses,
-                                        totalIncome = data.totalIncome,
-                                        spendingRatio = spendingRatio,
-                                        modifier = Modifier.padding(horizontal = 20.dp)
-                                    )
-                                }
-                            }
-
-                            // Monthly comparison — current vs previous month delta.
-                            if (!state.isAllTimeMode && (state.prevMonthIncome > 0 || state.prevMonthExpense > 0 || data.totalIncome > 0 || data.totalExpenses > 0)) {
+                            // (3) vs Previous Month — only meaningful in monthly mode.
+                            if (!hasCustomRange &&
+                                (state.prevMonthIncome > 0 || state.prevMonthExpense > 0 || data.totalIncome > 0 || data.totalExpenses > 0)
+                            ) {
                                 item {
                                     Spacer(modifier = Modifier.height(12.dp))
                                     MonthlyComparisonCard(
@@ -284,13 +249,77 @@ fun DashboardScreen(
                                         prevIncome = state.prevMonthIncome,
                                         currentExpense = data.totalExpenses,
                                         prevExpense = state.prevMonthExpense,
+                                        showIncome = showIncomeCards,
+                                        showExpense = showExpenseCards,
                                         modifier = Modifier.padding(horizontal = 20.dp)
                                     )
                                 }
                             }
 
-                            // 6-month trend chart — tap any bar to drill into that month.
-                            if (state.monthlyTrend.size >= 2) {
+                            // (4) Expense categories — ranked by amount, every row clickable.
+                            if (showExpenseCards && data.totalExpenses > 0 && data.categoryBreakdown.isNotEmpty()) {
+                                item {
+                                    Spacer(modifier = Modifier.height(16.dp))
+                                    CategoryBreakdownCard(
+                                        title = "Where Your Money Goes",
+                                        breakdown = data.categoryBreakdown,
+                                        total = data.totalExpenses,
+                                        accent = ExpenseRed,
+                                        onRowClick = { cat ->
+                                            onNavigateToDrillDown(drillRoute(
+                                                type = "EXPENSE",
+                                                year = if (hasCustomRange) -1 else yr,
+                                                month = if (hasCustomRange) -1 else mo,
+                                                categoryId = cat.id,
+                                                title = "${cat.icon} ${cat.name}"
+                                            ))
+                                        },
+                                        onMoreClick = {
+                                            onNavigateToDrillDown(drillRoute(
+                                                type = "EXPENSE",
+                                                year = if (hasCustomRange) -1 else yr,
+                                                month = if (hasCustomRange) -1 else mo,
+                                                title = "All Expense Categories"
+                                            ))
+                                        },
+                                        modifier = Modifier.padding(horizontal = 20.dp)
+                                    )
+                                }
+                            }
+
+                            // (5) Income categories — ranked by amount, every row clickable.
+                            if (showIncomeCards && data.totalIncome > 0 && data.incomeBreakdown.isNotEmpty()) {
+                                item {
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    CategoryBreakdownCard(
+                                        title = "Where Your Money Comes From",
+                                        breakdown = data.incomeBreakdown,
+                                        total = data.totalIncome,
+                                        accent = IncomeGreen,
+                                        onRowClick = { cat ->
+                                            onNavigateToDrillDown(drillRoute(
+                                                type = "INCOME",
+                                                year = if (hasCustomRange) -1 else yr,
+                                                month = if (hasCustomRange) -1 else mo,
+                                                categoryId = cat.id,
+                                                title = "${cat.icon} ${cat.name}"
+                                            ))
+                                        },
+                                        onMoreClick = {
+                                            onNavigateToDrillDown(drillRoute(
+                                                type = "INCOME",
+                                                year = if (hasCustomRange) -1 else yr,
+                                                month = if (hasCustomRange) -1 else mo,
+                                                title = "All Income Categories"
+                                            ))
+                                        },
+                                        modifier = Modifier.padding(horizontal = 20.dp)
+                                    )
+                                }
+                            }
+
+                            // (6) 6-month trend — only meaningful in monthly mode.
+                            if (!hasCustomRange && state.monthlyTrend.size >= 2) {
                                 item {
                                     Spacer(modifier = Modifier.height(12.dp))
                                     SixMonthTrendCard(
@@ -308,130 +337,14 @@ fun DashboardScreen(
                                 }
                             }
 
-                            // Category breakdown — every row tappable, plus a tappable
-                            // "+N more categories" link that opens the full drill-down list.
-                            val (yr, mo) = selectedYearMonth
-                            if (data.totalExpenses > 0 && data.categoryBreakdown.isNotEmpty()) {
+                            // Empty state — only when nothing was found at all.
+                            if (data.totalIncome == 0.0 && data.totalExpenses == 0.0 && state.pendingCount == 0) {
                                 item {
                                     Spacer(modifier = Modifier.height(16.dp))
-                                    CategoryBreakdownCard(
-                                        title = "Where Your Money Goes",
-                                        breakdown = data.categoryBreakdown,
-                                        total = data.totalExpenses,
-                                        accent = ExpenseRed,
-                                        onRowClick = { cat ->
-                                            onNavigateToDrillDown(drillRoute(
-                                                type = "EXPENSE",
-                                                year = if (state.isAllTimeMode) -1 else yr,
-                                                month = if (state.isAllTimeMode) -1 else mo,
-                                                allTime = state.isAllTimeMode,
-                                                categoryId = cat.id,
-                                                title = "${cat.icon} ${cat.name}"
-                                            ))
-                                        },
-                                        onMoreClick = {
-                                            onNavigateToDrillDown(drillRoute(
-                                                type = "EXPENSE",
-                                                year = if (state.isAllTimeMode) -1 else yr,
-                                                month = if (state.isAllTimeMode) -1 else mo,
-                                                allTime = state.isAllTimeMode,
-                                                title = "All Expense Categories"
-                                            ))
-                                        },
+                                    EmptyState(
+                                        onImport = onNavigateToImport,
+                                        onAdd = onNavigateToAddTransaction,
                                         modifier = Modifier.padding(horizontal = 20.dp)
-                                    )
-                                }
-                            }
-
-                            // Income sources — same treatment.
-                            if (data.totalIncome > 0 && data.incomeBreakdown.isNotEmpty()) {
-                                item {
-                                    Spacer(modifier = Modifier.height(12.dp))
-                                    CategoryBreakdownCard(
-                                        title = "Where Your Money Comes From",
-                                        breakdown = data.incomeBreakdown,
-                                        total = data.totalIncome,
-                                        accent = IncomeGreen,
-                                        onRowClick = { cat ->
-                                            onNavigateToDrillDown(drillRoute(
-                                                type = "INCOME",
-                                                year = if (state.isAllTimeMode) -1 else yr,
-                                                month = if (state.isAllTimeMode) -1 else mo,
-                                                allTime = state.isAllTimeMode,
-                                                categoryId = cat.id,
-                                                title = "${cat.icon} ${cat.name}"
-                                            ))
-                                        },
-                                        onMoreClick = {
-                                            onNavigateToDrillDown(drillRoute(
-                                                type = "INCOME",
-                                                year = if (state.isAllTimeMode) -1 else yr,
-                                                month = if (state.isAllTimeMode) -1 else mo,
-                                                allTime = state.isAllTimeMode,
-                                                title = "All Income Categories"
-                                            ))
-                                        },
-                                        modifier = Modifier.padding(horizontal = 20.dp)
-                                    )
-                                }
-                            }
-
-                            // Recent transactions header
-                            item {
-                                Spacer(modifier = Modifier.height(24.dp))
-                                Text(
-                                    text = "Recent Activity",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    modifier = Modifier.padding(horizontal = 20.dp)
-                                )
-                                Spacer(modifier = Modifier.height(8.dp))
-                            }
-
-                            if (data.recentTransactions.isEmpty()) {
-                                item {
-                                    Column(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(horizontal = 20.dp)
-                                            .clip(RoundedCornerShape(16.dp))
-                                            .background(MaterialTheme.colorScheme.surface)
-                                            .padding(24.dp),
-                                        horizontalAlignment = Alignment.CenterHorizontally,
-                                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                                    ) {
-                                        Text(
-                                            text = "No transactions yet",
-                                            style = MaterialTheme.typography.titleSmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                            OutlinedButton(
-                                                onClick = onNavigateToImport,
-                                                modifier = Modifier.weight(1f)
-                                            ) {
-                                                Icon(Icons.Default.FileUpload, contentDescription = null, modifier = Modifier.size(16.dp))
-                                                Spacer(Modifier.width(4.dp))
-                                                Text("Import")
-                                            }
-                                            Button(
-                                                onClick = onNavigateToAddTransaction,
-                                                modifier = Modifier.weight(1f),
-                                                colors = ButtonDefaults.buttonColors(containerColor = BrandBlue)
-                                            ) {
-                                                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                                                Spacer(Modifier.width(4.dp))
-                                                Text("Add")
-                                            }
-                                        }
-                                    }
-                                }
-                            } else {
-                                items(data.recentTransactions) { transaction ->
-                                    StyledTransactionItem(
-                                        transaction = transaction,
-                                        onClick = { onTransactionClick(transaction.id) },
-                                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)
                                     )
                                 }
                             }
@@ -575,10 +488,112 @@ private fun BalanceCard(
 }
 
 @Composable
-private fun SpendingProgressCard(
-    totalExpenses: Double,
-    totalIncome: Double,
-    spendingRatio: Float,
+private fun FilterRow(
+    typeFilter: DashboardTypeFilter,
+    onTypeChange: (DashboardTypeFilter) -> Unit,
+    customRange: Pair<Long, Long>?,
+    onCustomRangeClick: () -> Unit,
+    onClearCustomRange: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(modifier = modifier) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            FilterChip(
+                selected = typeFilter == DashboardTypeFilter.ALL,
+                onClick = { onTypeChange(DashboardTypeFilter.ALL) },
+                label = { Text("All") },
+                modifier = Modifier.weight(1f)
+            )
+            FilterChip(
+                selected = typeFilter == DashboardTypeFilter.INCOME,
+                onClick = { onTypeChange(DashboardTypeFilter.INCOME) },
+                label = { Text("Income") },
+                modifier = Modifier.weight(1f)
+            )
+            FilterChip(
+                selected = typeFilter == DashboardTypeFilter.EXPENSE,
+                onClick = { onTypeChange(DashboardTypeFilter.EXPENSE) },
+                label = { Text("Expenses") },
+                modifier = Modifier.weight(1f)
+            )
+        }
+        Spacer(Modifier.height(6.dp))
+        if (customRange == null) {
+            OutlinedButton(
+                onClick = onCustomRangeClick,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Custom date range…", style = MaterialTheme.typography.labelMedium)
+            }
+        } else {
+            // Active custom-range chip with a clear button
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.secondaryContainer,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "Custom range active",
+                        style = MaterialTheme.typography.labelMedium,
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextButton(onClick = onCustomRangeClick) { Text("Change") }
+                    TextButton(onClick = onClearCustomRange) { Text("Clear") }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DateRangePickerDialog(
+    initialRange: Pair<Long, Long>?,
+    onDismiss: () -> Unit,
+    onConfirm: (startMs: Long, endMsExclusive: Long) -> Unit
+) {
+    val state = rememberDateRangePickerState(
+        initialSelectedStartDateMillis = initialRange?.first,
+        initialSelectedEndDateMillis = initialRange?.second?.let { it - 1 } // end is exclusive; picker uses inclusive
+    )
+    DatePickerDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    val s = state.selectedStartDateMillis
+                    val e = state.selectedEndDateMillis
+                    if (s != null && e != null) {
+                        // Convert inclusive end → exclusive end (next-day-midnight)
+                        val cal = java.util.Calendar.getInstance().apply {
+                            timeInMillis = e
+                            set(java.util.Calendar.HOUR_OF_DAY, 0); set(java.util.Calendar.MINUTE, 0)
+                            set(java.util.Calendar.SECOND, 0); set(java.util.Calendar.MILLISECOND, 0)
+                            add(java.util.Calendar.DAY_OF_MONTH, 1)
+                        }
+                        onConfirm(s, cal.timeInMillis)
+                    }
+                },
+                enabled = state.selectedStartDateMillis != null && state.selectedEndDateMillis != null
+            ) { Text("Apply") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    ) {
+        DateRangePicker(state = state, title = { Text("Select date range", modifier = Modifier.padding(16.dp)) })
+    }
+}
+
+@Composable
+private fun EmptyState(
+    onImport: () -> Unit,
+    onAdd: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Surface(
@@ -587,95 +602,33 @@ private fun SpendingProgressCard(
         color = MaterialTheme.colorScheme.surface,
         tonalElevation = 1.dp
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "Monthly Spending",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Text(
-                    text = "${(spendingRatio * 100).toInt()}% of income",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (spendingRatio > 0.9f) ExpenseRed else MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            Spacer(modifier = Modifier.height(10.dp))
-            LinearProgressIndicator(
-                progress = { spendingRatio },
-                modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)),
-                color = when {
-                    spendingRatio > 0.9f -> ExpenseRed
-                    spendingRatio > 0.7f -> WarningOrange
-                    else -> BrandBlue
-                },
-                trackColor = MaterialTheme.colorScheme.surfaceVariant
-            )
-            Spacer(modifier = Modifier.height(8.dp))
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text("Nothing to show for this period", style = MaterialTheme.typography.titleSmall)
             Text(
-                text = "${totalExpenses.toCurrency()} spent of ${totalIncome.toCurrency()}",
+                "Import a bank statement or add transactions manually to see your monthly summary.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-        }
-    }
-}
-
-@Composable
-private fun StyledTransactionItem(
-    transaction: Transaction,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val iconColor = categoryColor(transaction.category.name)
-
-    Surface(
-        modifier = modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick),
-        shape = RoundedCornerShape(12.dp),
-        color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 1.dp
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(44.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(iconColor.copy(alpha = 0.15f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(text = transaction.category.icon, fontSize = 20.sp)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = onImport, modifier = Modifier.weight(1f)) {
+                    Icon(Icons.Default.FileUpload, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Import")
+                }
+                Button(
+                    onClick = onAdd,
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(containerColor = BrandBlue)
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Add")
+                }
             }
-            Spacer(modifier = Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = transaction.description,
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1
-                )
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = "${transaction.category.name} · ${transaction.date.toDateString("MMM d")}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            Text(
-                text = if (transaction.type == TransactionType.INCOME) "+${transaction.amount.toCurrency()}"
-                else "-${transaction.amount.toCurrency()}",
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.SemiBold,
-                color = if (transaction.type == TransactionType.INCOME) IncomeGreen else ExpenseRed
-            )
         }
     }
 }
@@ -686,8 +639,11 @@ private fun MonthlyComparisonCard(
     prevIncome: Double,
     currentExpense: Double,
     prevExpense: Double,
+    showIncome: Boolean = true,
+    showExpense: Boolean = true,
     modifier: Modifier = Modifier
 ) {
+    if (!showIncome && !showExpense) return
     Surface(
         modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
@@ -698,23 +654,27 @@ private fun MonthlyComparisonCard(
             Text("vs Previous Month", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.height(10.dp))
             Row(modifier = Modifier.fillMaxWidth()) {
-                ComparisonCell(
-                    label = "Income",
-                    accent = IncomeGreen,
-                    current = currentIncome,
-                    previous = prevIncome,
-                    higherIsGood = true,
-                    modifier = Modifier.weight(1f)
-                )
-                Spacer(Modifier.width(12.dp))
-                ComparisonCell(
-                    label = "Expenses",
-                    accent = ExpenseRed,
-                    current = currentExpense,
-                    previous = prevExpense,
-                    higherIsGood = false,
-                    modifier = Modifier.weight(1f)
-                )
+                if (showIncome) {
+                    ComparisonCell(
+                        label = "Income",
+                        accent = IncomeGreen,
+                        current = currentIncome,
+                        previous = prevIncome,
+                        higherIsGood = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                if (showIncome && showExpense) Spacer(Modifier.width(12.dp))
+                if (showExpense) {
+                    ComparisonCell(
+                        label = "Expenses",
+                        accent = ExpenseRed,
+                        current = currentExpense,
+                        previous = prevExpense,
+                        higherIsGood = false,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
             }
         }
     }
@@ -836,7 +796,7 @@ private fun SixMonthTrendCard(
 private fun CategoryBreakdownCard(
     title: String,
     breakdown: Map<com.budgetapp.domain.model.Category, Double>,
-    total: Double,
+    @Suppress("UNUSED_PARAMETER") total: Double,  // kept for callsite symmetry; no longer rendered as %
     accent: Color,
     onRowClick: ((com.budgetapp.domain.model.Category) -> Unit)? = null,
     onMoreClick: (() -> Unit)? = null,
@@ -918,107 +878,6 @@ private fun CategoryBreakdownCard(
 }
 
 @Composable
-private fun ScopeToggle(isAllTime: Boolean, onToggle: () -> Unit, modifier: Modifier = Modifier) {
-    Row(
-        modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        FilterChip(
-            selected = !isAllTime,
-            onClick = { if (isAllTime) onToggle() },
-            label = { Text("This Month") },
-            modifier = Modifier.weight(1f)
-        )
-        FilterChip(
-            selected = isAllTime,
-            onClick = { if (!isAllTime) onToggle() },
-            label = { Text("All Time") },
-            modifier = Modifier.weight(1f)
-        )
-    }
-}
-
-@Composable
-private fun AllTimeTotalsCard(
-    income: Double,
-    expense: Double,
-    onIncomeClick: (() -> Unit)? = null,
-    onExpenseClick: (() -> Unit)? = null,
-    modifier: Modifier = Modifier
-) {
-    Surface(
-        modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 1.dp
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text("All-Time Totals", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.height(8.dp))
-            Row(modifier = Modifier.fillMaxWidth()) {
-                Column(
-                    modifier = Modifier.weight(1f).let { if (onIncomeClick != null) it.clickable(onClick = onIncomeClick) else it }
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(IncomeGreen))
-                        Spacer(Modifier.width(6.dp))
-                        Text("Income", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        if (onIncomeClick != null) Icon(Icons.Default.ChevronRight, contentDescription = null, modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    Spacer(Modifier.height(2.dp))
-                    Text("+${income.toCurrency()}", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold, color = IncomeGreen)
-                }
-                Column(
-                    modifier = Modifier.weight(1f).let { if (onExpenseClick != null) it.clickable(onClick = onExpenseClick) else it }
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(ExpenseRed))
-                        Spacer(Modifier.width(6.dp))
-                        Text("Expenses", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        if (onExpenseClick != null) Icon(Icons.Default.ChevronRight, contentDescription = null, modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    Spacer(Modifier.height(2.dp))
-                    Text("-${expense.toCurrency()}", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold, color = ExpenseRed)
-                }
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("Net", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Spacer(Modifier.height(2.dp))
-                    Text(
-                        (income - expense).toCurrency(),
-                        style = MaterialTheme.typography.bodyLarge,
-                        fontWeight = FontWeight.SemiBold,
-                        color = if (income - expense >= 0) IncomeGreen else ExpenseRed
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun IncomeElsewhereBanner(modifier: Modifier = Modifier) {
-    Surface(
-        modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        color = IncomeGreen.copy(alpha = 0.1f),
-        tonalElevation = 1.dp
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(Icons.Default.Notifications, contentDescription = null, tint = IncomeGreen)
-            Spacer(Modifier.width(12.dp))
-            Text(
-                "You have income recorded — but not in this month. Use the arrows above to navigate to another month.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-        }
-    }
-}
-
-@Composable
 private fun PendingReviewBanner(count: Int, onClick: () -> Unit, modifier: Modifier = Modifier) {
     Surface(
         modifier = modifier.fillMaxWidth().clickable(onClick = onClick),
@@ -1045,40 +904,6 @@ private fun PendingReviewBanner(count: Int, onClick: () -> Unit, modifier: Modif
                 )
             }
             Icon(Icons.Default.ChevronRight, contentDescription = null, tint = WarningOrange)
-        }
-    }
-}
-
-@Composable
-private fun NoIncomeHintBanner(onImport: () -> Unit, modifier: Modifier = Modifier) {
-    Surface(
-        modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 1.dp
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.FileUpload, contentDescription = null, tint = BrandBlue)
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    "No income recorded this month",
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.SemiBold
-                )
-            }
-            Spacer(Modifier.height(4.dp))
-            Text(
-                "If you imported a credit-card statement, import your bank statement too — that's where salary and other income are.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.height(10.dp))
-            OutlinedButton(onClick = onImport) {
-                Icon(Icons.Default.FileUpload, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(6.dp))
-                Text("Import bank statement")
-            }
         }
     }
 }

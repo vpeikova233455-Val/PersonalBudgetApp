@@ -13,34 +13,50 @@ import javax.inject.Inject
 class GetDashboardDataUseCase @Inject constructor(
     private val transactionRepository: TransactionRepository
 ) {
-    operator fun invoke(userId: String, year: Int, month: Int, allTime: Boolean = false): Flow<DashboardData> {
+    operator fun invoke(
+        userId: String,
+        year: Int,
+        month: Int,
+        allTime: Boolean = false,
+        customRange: Pair<Long, Long>? = null,
+        typeFilter: TransactionType? = null
+    ): Flow<DashboardData> {
         val monthStart: Long
         val monthEnd: Long
-        if (allTime) {
-            // Half the long range to keep arithmetic safe; covers any real timestamp.
-            monthStart = Long.MIN_VALUE / 2
-            monthEnd   = Long.MAX_VALUE / 2
-        } else {
-            val start = Calendar.getInstance().apply {
-                set(Calendar.YEAR, year)
-                set(Calendar.MONTH, month)
-                set(Calendar.DAY_OF_MONTH, 1)
-                set(Calendar.HOUR_OF_DAY, 0)
-                set(Calendar.MINUTE, 0)
-                set(Calendar.SECOND, 0)
-                set(Calendar.MILLISECOND, 0)
+        when {
+            customRange != null -> {
+                monthStart = customRange.first
+                monthEnd   = customRange.second
             }
-            monthStart = start.timeInMillis
-            monthEnd = (start.clone() as Calendar).apply { add(Calendar.MONTH, 1) }.timeInMillis
+            allTime -> {
+                monthStart = Long.MIN_VALUE / 2
+                monthEnd   = Long.MAX_VALUE / 2
+            }
+            else -> {
+                val start = Calendar.getInstance().apply {
+                    set(Calendar.YEAR, year)
+                    set(Calendar.MONTH, month)
+                    set(Calendar.DAY_OF_MONTH, 1)
+                    set(Calendar.HOUR_OF_DAY, 0)
+                    set(Calendar.MINUTE, 0)
+                    set(Calendar.SECOND, 0)
+                    set(Calendar.MILLISECOND, 0)
+                }
+                monthStart = start.timeInMillis
+                monthEnd = (start.clone() as Calendar).apply { add(Calendar.MONTH, 1) }.timeInMillis
+            }
         }
 
-        AppLogger.d(TAG, "Querying dashboard data for year=$year month=$month allTime=$allTime [$monthStart..$monthEnd)")
+        AppLogger.d(TAG, "Querying dashboard data for year=$year month=$month allTime=$allTime customRange=$customRange typeFilter=$typeFilter [$monthStart..$monthEnd)")
 
         // Recurring detection needs the full transaction history, not just the selected
         // month — a "monthly" pattern by definition appears across multiple months.
         return transactionRepository.getTransactionsByDateRange(userId, monthStart, monthEnd)
             .combine(transactionRepository.getAllTransactions(userId)) { monthTxs, allTxs -> monthTxs to allTxs }
-            .map { (transactions, allTxs) ->
+            .map { (rawTxs, allTxs) ->
+                // Type filter applied AFTER fetching: BalanceCard always shows both income
+                // and expense totals as reference, while breakdowns scope to the filter.
+                val transactions = if (typeFilter != null) rawTxs.filter { it.type == typeFilter } else rawTxs
                 val incomeList   = transactions.filter { it.type == TransactionType.INCOME }
                 val expenseList  = transactions.filter { it.type == TransactionType.EXPENSE }
                 val totalIncome  = incomeList.sumOf  { it.amount }

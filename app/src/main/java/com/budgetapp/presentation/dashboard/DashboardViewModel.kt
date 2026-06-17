@@ -34,17 +34,18 @@ private const val TAG = "DashboardViewModel"
 
 data class MonthlyBucket(val year: Int, val month: Int, val label: String, val income: Double, val expense: Double)
 
+enum class DashboardTypeFilter { ALL, INCOME, EXPENSE }
+
 sealed class DashboardUiState {
     data object Loading : DashboardUiState()
     data class Success(
         val data: DashboardData,
         val pendingCount: Int = 0,
-        val allTimeIncome: Double = 0.0,
-        val allTimeExpense: Double = 0.0,
         val prevMonthIncome: Double = 0.0,
         val prevMonthExpense: Double = 0.0,
         val monthlyTrend: List<MonthlyBucket> = emptyList(),
-        val isAllTimeMode: Boolean = false,
+        val typeFilter: DashboardTypeFilter = DashboardTypeFilter.ALL,
+        val customRange: Pair<Long, Long>? = null,    // (startMs, endMsExclusive) — overrides month
         val isRefreshing: Boolean = false
     ) : DashboardUiState()
     data class Error(val message: String) : DashboardUiState()
@@ -71,14 +72,27 @@ class DashboardViewModel @Inject constructor(
     )
     val selectedYearMonth: StateFlow<Pair<Int, Int>> = _selectedYearMonth.asStateFlow()
 
-    // When true, the dashboard ignores the selected month and shows totals + transactions
-    // for every date in the database. Critical fallback when income/expense rows have
-    // dates outside any month the user has navigated to.
-    private val _isAllTimeMode = MutableStateFlow(false)
+    // Type filter: scope the dashboard to a single transaction type (income or expense).
+    // Driven by the chip row below the BalanceCard.
+    private val _typeFilter = MutableStateFlow(DashboardTypeFilter.ALL)
 
-    fun toggleAllTimeMode() {
-        _isAllTimeMode.value = !_isAllTimeMode.value
-        AppLogger.d(TAG, "All-time mode toggled → ${_isAllTimeMode.value}")
+    // Custom date range. When non-null, the dashboard ignores the month selector and
+    // scopes every card to this window. When null, the dashboard runs in monthly mode.
+    private val _customRange = MutableStateFlow<Pair<Long, Long>?>(null)
+
+    fun setTypeFilter(f: DashboardTypeFilter) {
+        _typeFilter.value = f
+        AppLogger.d(TAG, "Type filter set to $f")
+    }
+
+    fun setCustomRange(startMs: Long, endMsExclusive: Long) {
+        _customRange.value = startMs to endMsExclusive
+        AppLogger.d(TAG, "Custom range set: $startMs..$endMsExclusive")
+    }
+
+    fun clearCustomRange() {
+        _customRange.value = null
+        AppLogger.d(TAG, "Custom range cleared — back to monthly view")
     }
 
     init {
@@ -176,43 +190,36 @@ class DashboardViewModel @Inject constructor(
             return
         }
 
-        val incomeAllTime  = transactionDao.getAllTimeTotalByType(userId, TransactionType.INCOME).map { it ?: 0.0 }
-        val expenseAllTime = transactionDao.getAllTimeTotalByType(userId, TransactionType.EXPENSE).map { it ?: 0.0 }
         val allTxs = transactionRepository.getAllTransactions(userId)
 
-        _selectedYearMonth.combine(_isAllTimeMode) { ym, allTime -> Triple(ym.first, ym.second, allTime) }
-            .flatMapLatest { (year, month, allTime) ->
+        // Trigger on (month, customRange, typeFilter). Type filter is applied in-memory
+        // inside the use case via the combine below; date range is determined by either
+        // the selected month or the custom range.
+        kotlinx.coroutines.flow.combine(
+            _selectedYearMonth,
+            _customRange,
+            _typeFilter
+        ) { ym, range, type -> Quadruple(ym.first, ym.second, range, type) }
+            .flatMapLatest { (year, month, range, type) ->
                 combine(
-                    getDashboardDataUseCase(userId, year, month, allTime),
+                    getDashboardDataUseCase(userId, year, month, allTime = false, customRange = range, typeFilter = type.toEntity()),
                     pendingTransactionDao.getPendingCount(userId),
-                    incomeAllTime,
-                    expenseAllTime,
                     allTxs
-                ) { values: Array<Any> ->
-                    @Suppress("UNCHECKED_CAST")
-                    val data    = values[0] as com.budgetapp.domain.model.DashboardData
-                    val pending = values[1] as Int
-                    val allIncome = values[2] as Double
-                    val allExpense = values[3] as Double
-                    val txs = values[4] as List<com.budgetapp.domain.model.Transaction>
-
-                    val (prevIncome, prevExpense) = previousMonthTotals(txs, year, month)
-                    val trend = if (allTime) emptyList() else lastNMonthsTrend(txs, year, month, 6)
+                ) { data, pending, txs ->
+                    val (prevIncome, prevExpense) = if (range == null) previousMonthTotals(txs, year, month) else 0.0 to 0.0
+                    val trend = if (range == null) lastNMonthsTrend(txs, year, month, 6) else emptyList()
 
                     val isRefreshing = (_uiState.value as? DashboardUiState.Success)?.isRefreshing ?: false
-                    AppLogger.d(TAG, "Dashboard $year/$month allTime=$allTime: pending=$pending income=${data.totalIncome} expense=${data.totalExpenses} | prev=$prevIncome/$prevExpense | trendBuckets=${trend.size}")
-                    if (!allTime && allIncome > 0 && data.totalIncome == 0.0) {
-                        AppLogger.w(TAG, "All-time income=$allIncome but this month=0 — income transactions exist with dates outside the current month range")
-                    }
+                    AppLogger.d(TAG, "Dashboard $year/$month type=$type range=$range: pending=$pending income=${data.totalIncome} expense=${data.totalExpenses} | prev=$prevIncome/$prevExpense | trendBuckets=${trend.size}")
+
                     DashboardUiState.Success(
                         data,
                         pendingCount = pending,
-                        allTimeIncome = allIncome,
-                        allTimeExpense = allExpense,
                         prevMonthIncome = prevIncome,
                         prevMonthExpense = prevExpense,
                         monthlyTrend = trend,
-                        isAllTimeMode = allTime,
+                        typeFilter = type,
+                        customRange = range,
                         isRefreshing = isRefreshing
                     ) as DashboardUiState
                 }
@@ -284,7 +291,17 @@ class DashboardViewModel @Inject constructor(
     }
 
     fun selectedMonthLabel(): String {
-        if (_isAllTimeMode.value) return "All Time"
+        val range = _customRange.value
+        if (range != null) {
+            val (start, end) = range
+            val startCal = Calendar.getInstance().apply { timeInMillis = start }
+            // endMs is exclusive; subtract a day for the display end-date
+            val endCal = Calendar.getInstance().apply { timeInMillis = end - 1 }
+            val sameYear = startCal.get(Calendar.YEAR) == endCal.get(Calendar.YEAR)
+            val fmtShort = SimpleDateFormat(if (sameYear) "MMM d" else "MMM d, yyyy", Locale.ENGLISH)
+            val fmtLong  = SimpleDateFormat("MMM d, yyyy", Locale.ENGLISH)
+            return "${fmtShort.format(startCal.time)} – ${fmtLong.format(endCal.time)}"
+        }
         val (year, month) = _selectedYearMonth.value
         val cal = Calendar.getInstance().apply {
             set(Calendar.YEAR, year)
@@ -322,4 +339,12 @@ class DashboardViewModel @Inject constructor(
         _uiState.value = DashboardUiState.Loading
         observeDashboard()
     }
+}
+
+private data class Quadruple<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)
+
+private fun DashboardTypeFilter.toEntity(): TransactionType? = when (this) {
+    DashboardTypeFilter.INCOME  -> TransactionType.INCOME
+    DashboardTypeFilter.EXPENSE -> TransactionType.EXPENSE
+    DashboardTypeFilter.ALL     -> null
 }
