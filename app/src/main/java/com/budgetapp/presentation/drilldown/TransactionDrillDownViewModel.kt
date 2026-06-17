@@ -35,9 +35,11 @@ data class DrillDownUiState(
 )
 
 data class DrillGroupUi(
+    val id: String,                                  // stable id used for expansion state (e.g. "month:June 2026")
     val label: String,
     val subtotal: Double,
-    val transactions: List<Transaction>,
+    val transactions: List<Transaction> = emptyList(),
+    val subGroups: List<DrillGroupUi> = emptyList(), // when populated, this group has nested groups instead of leaf txs
     val expanded: Boolean = false
 )
 
@@ -92,12 +94,15 @@ class TransactionDrillDownViewModel @Inject constructor(
         }
     }
 
-    fun toggleExpanded(groupLabel: String) {
+    fun toggleExpanded(groupId: String) {
         _ui.update { st ->
-            st.copy(groups = st.groups.map { g ->
-                if (g.label == groupLabel) g.copy(expanded = !g.expanded) else g
-            })
+            st.copy(groups = st.groups.map { g -> toggleRecursive(g, groupId) })
         }
+    }
+
+    private fun toggleRecursive(g: DrillGroupUi, targetId: String): DrillGroupUi {
+        return if (g.id == targetId) g.copy(expanded = !g.expanded)
+               else g.copy(subGroups = g.subGroups.map { toggleRecursive(it, targetId) })
     }
 
     fun setGrouping(g: DrillGrouping) {
@@ -144,32 +149,71 @@ class TransactionDrillDownViewModel @Inject constructor(
                 .sortedByDescending { it.value.sumOf { tx -> tx.amount } }
                 .map { (cat, txs) ->
                     DrillGroupUi(
+                        id = "cat:${cat.id}",
                         label = "${cat.icon} ${cat.name}",
                         subtotal = txs.sumOf { it.amount },
                         transactions = txs.sortedByDescending { it.date }
                     )
                 }
+            // Month → Category → Transactions. Each month carries its own per-category
+            // sub-groups; tapping a category inside a month shows only that month's
+            // transactions for that category (not all-time).
             DrillGrouping.MONTH -> filtered
                 .groupBy { monthLabel(it.date) }
                 .entries
                 .sortedByDescending { it.value.firstOrNull()?.date ?: 0L }
-                .map { (label, txs) ->
+                .map { (monthLbl, monthTxs) ->
+                    val catSubGroups = monthTxs
+                        .groupBy { it.category }
+                        .entries
+                        .sortedByDescending { it.value.sumOf { tx -> tx.amount } }
+                        .map { (cat, catTxs) ->
+                            DrillGroupUi(
+                                id = "month:$monthLbl|cat:${cat.id}",
+                                label = "${cat.icon} ${cat.name}",
+                                subtotal = catTxs.sumOf { it.amount },
+                                transactions = catTxs.sortedByDescending { it.date }
+                            )
+                        }
                     DrillGroupUi(
-                        label = label,
-                        subtotal = txs.sumOf { it.amount },
-                        transactions = txs.sortedByDescending { it.date }
+                        id = "month:$monthLbl",
+                        label = monthLbl,
+                        subtotal = monthTxs.sumOf { it.amount },
+                        subGroups = catSubGroups
                     )
                 }
         }
-        // Preserve expansion state across re-loads when the label is unchanged.
-        val previousExpanded = _ui.value.groups.filter { it.expanded }.map { it.label }.toSet()
-        val groupsWithExpansion = groups.map { it.copy(expanded = it.label in previousExpanded || groups.size <= 3) }
+        // Preserve expansion state across re-loads when the id is unchanged. Top-level
+        // groups also auto-expand when there are ≤3 of them so the user sees content
+        // without an extra tap.
+        val previousExpanded = collectExpandedIds(_ui.value.groups)
+        val groupsWithExpansion = groups.map {
+            applyExpansion(it, previousExpanded, autoExpandTopLevel = groups.size <= 3)
+        }
 
         _ui.value = _ui.value.copy(
             isLoading = false,
             total = filtered.sumOf { it.amount },
             count = filtered.size,
             groups = groupsWithExpansion
+        )
+    }
+
+    private fun collectExpandedIds(groups: List<DrillGroupUi>): Set<String> {
+        val out = mutableSetOf<String>()
+        fun walk(g: DrillGroupUi) {
+            if (g.expanded) out += g.id
+            g.subGroups.forEach { walk(it) }
+        }
+        groups.forEach { walk(it) }
+        return out
+    }
+
+    private fun applyExpansion(g: DrillGroupUi, previous: Set<String>, autoExpandTopLevel: Boolean): DrillGroupUi {
+        val expanded = g.id in previous || autoExpandTopLevel
+        return g.copy(
+            expanded = expanded,
+            subGroups = g.subGroups.map { applyExpansion(it, previous, autoExpandTopLevel = false) }
         )
     }
 

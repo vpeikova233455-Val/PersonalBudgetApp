@@ -308,8 +308,8 @@ fun DashboardScreen(
                                 }
                             }
 
-                            // Category breakdown — tappable rows: open inline subset of category
-                            // transactions, or jump to the full drill-down screen.
+                            // Category breakdown — every row tappable, plus a tappable
+                            // "+N more categories" link that opens the full drill-down list.
                             val (yr, mo) = selectedYearMonth
                             if (data.totalExpenses > 0 && data.categoryBreakdown.isNotEmpty()) {
                                 item {
@@ -327,6 +327,15 @@ fun DashboardScreen(
                                                 allTime = state.isAllTimeMode,
                                                 categoryId = cat.id,
                                                 title = "${cat.icon} ${cat.name}"
+                                            ))
+                                        },
+                                        onMoreClick = {
+                                            onNavigateToDrillDown(drillRoute(
+                                                type = "EXPENSE",
+                                                year = if (state.isAllTimeMode) -1 else yr,
+                                                month = if (state.isAllTimeMode) -1 else mo,
+                                                allTime = state.isAllTimeMode,
+                                                title = "All Expense Categories"
                                             ))
                                         },
                                         modifier = Modifier.padding(horizontal = 20.dp)
@@ -351,6 +360,15 @@ fun DashboardScreen(
                                                 allTime = state.isAllTimeMode,
                                                 categoryId = cat.id,
                                                 title = "${cat.icon} ${cat.name}"
+                                            ))
+                                        },
+                                        onMoreClick = {
+                                            onNavigateToDrillDown(drillRoute(
+                                                type = "INCOME",
+                                                year = if (state.isAllTimeMode) -1 else yr,
+                                                month = if (state.isAllTimeMode) -1 else mo,
+                                                allTime = state.isAllTimeMode,
+                                                title = "All Income Categories"
                                             ))
                                         },
                                         modifier = Modifier.padding(horizontal = 20.dp)
@@ -821,6 +839,7 @@ private fun CategoryBreakdownCard(
     total: Double,
     accent: Color,
     onRowClick: ((com.budgetapp.domain.model.Category) -> Unit)? = null,
+    onMoreClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val sorted = breakdown.entries.sortedByDescending { it.value }.take(8)
@@ -839,51 +858,60 @@ private fun CategoryBreakdownCard(
             )
             Spacer(Modifier.height(12.dp))
             sorted.forEach { (category, amount) ->
-                val pct = if (total > 0) (amount / total).toFloat() else 0f
-                Column(
+                Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .let { if (onRowClick != null) it.clickable { onRowClick(category) } else it }
-                        .padding(vertical = 6.dp)
+                        .padding(vertical = 10.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                            Text(text = category.icon, fontSize = 16.sp)
-                            Spacer(Modifier.width(6.dp))
-                            Text(category.name, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
-                        }
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                "${amount.toCurrency()} · ${(pct * 100).toInt()}%",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            if (onRowClick != null) {
-                                Spacer(Modifier.width(4.dp))
-                                Icon(Icons.Default.ChevronRight, contentDescription = null, modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                        }
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                        Text(text = category.icon, fontSize = 18.sp)
+                        Spacer(Modifier.width(8.dp))
+                        Text(category.name, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
                     }
-                    Spacer(Modifier.height(4.dp))
-                    LinearProgressIndicator(
-                        progress = { pct },
-                        modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
-                        color = accent,
-                        trackColor = accent.copy(alpha = 0.15f)
+                    Text(
+                        amount.toCurrency(),
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = accent
                     )
+                    if (onRowClick != null) {
+                        Spacer(Modifier.width(4.dp))
+                        Icon(Icons.Default.ChevronRight, contentDescription = null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
             }
             if (breakdown.size > 8) {
                 Spacer(Modifier.height(6.dp))
-                Text(
-                    "+${breakdown.size - 8} more categories",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                // "+N more categories" — tappable row that opens the full drill-down
+                // (categories sorted by amount, each expandable to its transactions).
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .let { if (onMoreClick != null) it.clickable(onClick = onMoreClick) else it },
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "+${breakdown.size - 8} more categories",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Text(
+                            "View all",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = accent
+                        )
+                        Icon(Icons.Default.ChevronRight, contentDescription = null, modifier = Modifier.size(16.dp), tint = accent)
+                    }
+                }
             }
         }
     }
